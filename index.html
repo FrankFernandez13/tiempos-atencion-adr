@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tiempos de Atención ADR</title>
+<meta name="description" content="Tiempos de espera, cuellos de botella e inasistencia en los servicios ambulatorios de la ADR (oct. 2025 – sep. 2026). Proyecto Final TCD-408, ITLA.">
+<style>html, body { margin: 0; background: #F4F6F7; }</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script>// Motor mínimo que reemplaza el entorno de Claude para publicar el tablero como sitio estático.
+// Carga los JSON de la carpeta datos/, recalcula los cálculos y redibuja al cambiar filtros, pestaña o ancho.
+(function () {
+  const ARCHIVOS = {
+    base: 'base.json', pacientes: 'pacientes.json', calor_base: 'calor_base.json', mensual_base: 'mensual_base.json',
+    antic_base: 'antic_base.json', demografia: 'demografia.json', episodios: 'episodios.json', serie: 'serie.json',
+    sensibilidad: 'sensibilidad.json', spearman: 'spearman.json', siguiente: 'siguiente.json'
+  };
+  const datos = {}, estado = {}, calcs = {}, cache = {}, dibujos = new Map();
+  let params = {}, version = 0, programado = false;
+
+  const cargar = (id) => {
+    if (estado[id]) return;
+    estado[id] = 'loading';
+    fetch('datos/' + ARCHIVOS[id]).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then((j) => { datos[id] = j; estado[id] = 'ok'; version++; redibujar(); })
+      .catch(() => { estado[id] = 'error'; version++; redibujar(); });
+  };
+
+  const dash = {
+    colors: ['#0A4E59', '#C97B3E', '#54839B', '#7FA8B6', '#B01C00', '#C9B458'],
+    data(id) {
+      if (calcs[id]) {
+        const def = calcs[id], ins = def.inputs.map((i) => dash.data(i));
+        if (ins.some((x) => x.status === 'error')) return { status: 'error', data: null };
+        if (ins.some((x) => x.status !== 'ok')) return { status: 'loading', data: null };
+        const clave = version + '|' + JSON.stringify(params);
+        if (!cache[id] || cache[id].clave !== clave) {
+          try { cache[id] = { clave, r: { status: 'ok', data: def.fn(...ins.map((x) => x.data)) } }; }
+          catch (e) { console.error(id, e); cache[id] = { clave, r: { status: 'error', data: null } }; }
+        }
+        return cache[id].r;
+      }
+      if (!ARCHIVOS[id]) return { status: 'missing', data: [] };
+      cargar(id);
+      return { status: estado[id], data: estado[id] === 'ok' ? datos[id] : [] };
+    },
+    calc(id, def) { calcs[id] = def; },
+    loader() {},
+    onData(fn) { dibujos.set('__onData' + dibujos.size, { fn, global: true }); },
+    draw(nombre, fn) {
+      if (fn) { dibujos.set(nombre, { fn }); return; }
+      ejecutar(nombre);
+    },
+    params() { return params; },
+    setParams(p) { params = { ...params, ...p }; redibujar(); },
+    resetParams() { params = {}; redibujar(); },
+    setLink(nombre) { try { history.replaceState(null, '', '#' + nombre); } catch (e) {} redibujar(); },
+    refresh() {}
+  };
+
+  const visible = (el) => !el.closest('[hidden]');
+  const ejecutar = (nombre) => {
+    const d = dibujos.get(nombre); if (!d) return;
+    if (d.global) { try { d.fn(); } catch (e) { console.error(e); } return; }
+    document.querySelectorAll(`[data-draw="${nombre}"]`).forEach((el) => { if (visible(el)) { try { d.fn(el); } catch (e) { console.error(nombre, e); } } });
+  };
+  const redibujar = () => {
+    if (programado) return; programado = true;
+    requestAnimationFrame(() => { programado = false; [...dibujos.keys()].forEach(ejecutar); });
+  };
+  let ancho = 0;
+  window.addEventListener('resize', () => { if (Math.abs(window.innerWidth - ancho) > 4) { ancho = window.innerWidth; redibujar(); } });
+  window.addEventListener('DOMContentLoaded', () => { ancho = window.innerWidth; redibujar(); });
+  document.addEventListener('click', (ev) => { if (ev.target.closest('.pest')) redibujar(); });
+  window.dash = dash;
+})();
+</script>
+</head>
+<body>
+<div id="dash-root">
+<style>
+  /* Estilo del tablero de Power BI (tema "ADR Tiempos de Atención"): fondo gris claro, tarjetas blancas, petróleo y naranja */
+  #dash-root { --dash-gutter: 0; }
+  .adr { --pet: #0A4E59; --nar: #C97B3E; --azu: #54839B; --cel: #7FA8B6; --roj: #B01C00; --ver: #5E9E7E; --ama: #C9B458;
+    --fondo: #F4F6F7; --panel: #FFFFFF; --linea: #DDE4E7; --tinta: #1E2B30; --gris: #5E6E75; --zebra: #F2F5F6; --suave: #E8EDEF;
+    --sombra: 0 2px 12px rgba(10, 78, 89, .10); --radio: 10px;
+    --sans: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; --serif: Georgia, "Times New Roman", serif;
+    container-type: inline-size; color-scheme: light; background: var(--fondo); color: var(--tinta); font-family: var(--sans);
+    display: flex; flex-direction: column; gap: 14px; padding: 16px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); }
+  .adr * { box-sizing: border-box; }
+  .adr p { margin: 0; }
+  .adr h2 { font-size: 13px; font-weight: 600; margin: 0; color: var(--tinta); }
+  .tarjeta { background: var(--panel); border: 1px solid var(--linea); border-radius: var(--radio); box-shadow: var(--sombra); padding: 12px 14px; min-width: 0; }
+  .cab { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; justify-content: space-between; }
+  .cab-logo img { display: block; height: 52px; width: auto; max-width: 180px; }
+  .cab-izq { display: flex; align-items: center; gap: 18px; min-width: 0; flex-wrap: wrap; }
+  .cab-tit { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .cab-tit .eyebrow { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--gris); }
+  .cab-tit h1 { font-family: var(--serif); font-weight: 700; color: var(--pet); font-size: 26px; margin: 0; line-height: 1.15; text-wrap: balance; }
+  .cab-tit .sub { font-size: 13px; color: var(--gris); }
+  .cab-fil { display: flex; flex-wrap: wrap; gap: 10px; }
+  .multi { position: relative; display: flex; flex-direction: column; gap: 3px; min-width: 150px; }
+  .multi > span { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--gris); }
+  .multi-btn { font: inherit; font-size: 13px; text-align: left; background: var(--panel); color: var(--tinta); border: 1px solid var(--linea); border-radius: 6px; padding: 6px 28px 6px 10px; cursor: pointer; position: relative; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .multi-btn::after { content: ""; position: absolute; right: 10px; top: 50%; width: 7px; height: 7px; border-right: 1.5px solid var(--gris); border-bottom: 1.5px solid var(--gris); transform: translateY(-70%) rotate(45deg); }
+  .multi-btn.activo { border-color: var(--pet); color: var(--pet); font-weight: 600; }
+  .multi-pan { position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 20; background: var(--panel); border: 1px solid var(--linea); border-radius: 8px; box-shadow: 0 8px 24px rgba(10,78,89,.18); padding: 8px; width: max-content; min-width: 220px; max-width: min(320px, 90vw); max-height: 320px; overflow: auto; }
+  .multi-pan .acciones { display: flex; justify-content: space-between; gap: 8px; padding: 2px 4px 6px; border-bottom: 1px solid var(--suave); margin-bottom: 4px; }
+  .multi-pan .acciones button { font: inherit; font-size: 12px; background: none; border: 0; color: var(--pet); cursor: pointer; padding: 2px; }
+  .multi-pan label { display: flex; gap: 8px; align-items: center; font-size: 13px; padding: 4px; border-radius: 4px; cursor: pointer; }
+  .multi-pan label:hover { background: var(--zebra); }
+  .multi-pan .grupo { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--gris); padding: 6px 4px 2px; }
+  .multi-pan input { accent-color: var(--pet); }
+  .pestanas { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pest { font: inherit; font-size: 13px; background: var(--panel); color: var(--gris); border: 1px solid var(--linea); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+  .pest[aria-selected="true"] { background: var(--pet); border-color: var(--pet); color: #fff; font-weight: 600; }
+  .pest:focus-visible, .multi-btn:focus-visible, .conmuta button:focus-visible { outline: 2px solid var(--nar); outline-offset: 2px; }
+  .lead { font-size: 14px; line-height: 1.5; color: var(--tinta); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .kpi { display: flex; flex-direction: column; gap: 4px; }
+  .kpi .k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--gris); font-weight: 600; }
+  .kpi .v { font-size: 28px; font-weight: 600; color: var(--pet); font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .kpi .v.nar { color: var(--nar); } .kpi .v.roj { color: var(--roj); }
+  .kpi .n { font-size: 12px; color: var(--gris); }
+  .rejilla { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  @container (min-width: 820px) { .rejilla { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rejilla .ancho { grid-column: 1 / -1; } }
+  .tarjeta.graf { display: flex; flex-direction: column; gap: 6px; }
+  .nota { font-size: 12px; color: var(--gris); line-height: 1.45; }
+  .lienzo { position: relative; width: 100%; min-height: 200px; }
+  .lienzo svg { display: block; overflow: visible; }
+  .lienzo text { font-family: var(--sans); font-size: 11px; fill: var(--gris); }
+  .lienzo text.et { fill: var(--tinta); font-variant-numeric: tabular-nums; }
+  .tip { position: absolute; pointer-events: none; background: #fff; border: 1px solid var(--linea); box-shadow: 0 6px 18px rgba(10,78,89,.18); border-radius: 6px; padding: 6px 9px; font-size: 12px; color: var(--tinta); white-space: nowrap; z-index: 10; }
+  .conmuta { display: inline-flex; border: 1px solid var(--linea); border-radius: 6px; overflow: hidden; align-self: flex-start; }
+  .conmuta button { font: inherit; font-size: 12px; background: var(--panel); border: 0; padding: 4px 10px; color: var(--gris); cursor: pointer; }
+  .conmuta button[aria-pressed="true"] { background: var(--pet); color: #fff; }
+  .desliza { overflow-x: auto; }
+  .tabla { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .tabla th { background: var(--pet); color: #fff; font-weight: 600; text-align: left; padding: 6px 8px; white-space: nowrap; }
+  .tabla td { padding: 6px 8px; border-bottom: 1px solid var(--suave); white-space: nowrap; }
+  .tabla tbody tr:nth-child(even) td { background: var(--zebra); }
+  .tabla .num { text-align: right; }
+  .tabla tr.total td { font-weight: 700; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid currentColor; }
+  .chip.si { color: var(--roj); } .chip.no { color: var(--gris); }
+  .seccion { display: flex; flex-direction: column; gap: 12px; }
+  .seccion[hidden] { display: none; }
+  .fil { display: flex; flex-wrap: wrap; gap: 10px; }
+  .fil label { display: flex; flex-direction: column; gap: 3px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--gris); }
+  .fil select { font: inherit; font-size: 13px; color: var(--tinta); background-color: var(--panel); border: 1px solid var(--linea); border-radius: 6px; padding: 6px 8px; max-width: 100%; }
+  .adr details summary { cursor: pointer; font-size: 12px; color: var(--gris); }
+  @media print { .seccion[hidden] { display: flex !important; break-before: page; } .pestanas, .cab-fil { display: none; } }
+</style>
+
+<div class="adr" id="adr" lang="es">
+  <header class="tarjeta cab" id="cabecera">
+    <div class="cab-izq">
+      <div class="cab-logo"><img src="logo.png" alt="Logo de Rehabilitación"></div>
+      <div class="cab-tit">
+        <span class="eyebrow">Asociación Dominicana de Rehabilitación · Proyecto Final TCD-408 (ITLA)</span>
+        <h1>Tiempos de atención y cuellos de botella</h1>
+        <span class="sub">Tres centros · oct. 2025 – sep. 2026</span>
+      </div>
+    </div>
+    <div class="cab-fil" id="filtros">
+      <div class="multi" id="m-centro"><span>Centro</span><div data-draw="f-centro" data-source="base"></div></div>
+      <div class="multi" id="m-localidad"><span>Localidad</span><div data-draw="f-localidad" data-source="base"></div></div>
+      <div class="multi" id="m-departamento"><span>Departamento</span><div data-draw="f-departamento" data-source="base"></div></div>
+      <div class="multi" id="m-area"><span>Área</span><div data-draw="f-area" data-source="base"></div></div>
+    </div>
+  </header>
+
+  <nav class="pestanas" role="tablist" id="pestanas">
+    <button class="pest" role="tab" aria-selected="true" data-tab="panorama" id="t-panorama">1 Panorama general</button>
+    <button class="pest" role="tab" aria-selected="false" data-tab="tiempos" id="t-tiempos">2 Tiempos de espera</button>
+    <button class="pest" role="tab" aria-selected="false" data-tab="diayhora" id="t-diayhora">3 Día y hora</button>
+    <button class="pest" role="tab" aria-selected="false" data-tab="cuellos" id="t-cuellos">4 Cuellos de botella</button>
+    <button class="pest" role="tab" aria-selected="false" data-tab="inasistencia" id="t-inasistencia">5 Inasistencia y carga</button>
+  </nav>
+
+  <!-- ===================== 1 PANORAMA ===================== -->
+  <section class="seccion" id="panorama">
+    <p class="lead" data-draw="lead">—</p>
+    <div class="kpis">
+      <div class="tarjeta kpi" id="k-visitas"><span class="k">Visitas programadas</span><span class="v" data-source="sel" data-field="visitas" data-row="0" data-draw="k-visitas">—</span><span class="n">oct. 2025 – sep. 2026</span></div>
+      <div class="tarjeta kpi" id="k-pacientes"><span class="k">Pacientes distintos</span><span class="v" data-source="sel" data-field="pacientes" data-row="0" data-draw="k-pacientes">—</span><span class="n">con al menos una cita</span></div>
+      <div class="tarjeta kpi" id="k-atendidas"><span class="k">Atendidas</span><span class="v" data-source="sel" data-field="pct_atendidas" data-row="0" data-draw="k-atendidas">—</span><span class="n">del total de citas</span></div>
+      <div class="tarjeta kpi" id="k-inasistencia"><span class="k">Inasistencia</span><span class="v roj" data-source="sel" data-field="pct_inasistencia" data-row="0" data-draw="k-inasistencia">—</span><span class="n">de las citas que llegaron a su fecha</span></div>
+    </div>
+    <div class="rejilla">
+      <div class="tarjeta graf" id="c-estado">
+        <h2>Visitas atendidas y no atendidas por centro</h2>
+        <div class="conmuta" role="group" aria-label="Escala">
+          <button type="button" id="e-conteo" aria-pressed="true" data-escala="conteo">Conteo</button>
+          <button type="button" id="e-pct" aria-pressed="false" data-escala="pct">100 %</button>
+        </div>
+        <div class="lienzo" data-draw="g-estado" data-source="sel_estado"></div>
+        <p class="nota">Las reprogramadas y canceladas no cuentan como atendidas ni como inasistencia.</p>
+      </div>
+      <div class="tarjeta graf" id="c-mensual">
+        <h2>Visitas por mes</h2>
+        <div class="lienzo" data-draw="g-mensual" data-source="sel_mensual" style="min-height:190px"></div>
+      </div>
+      <div class="tarjeta graf" id="c-edad">
+        <h2>Visitas por rango de edad</h2>
+        <div class="lienzo" data-draw="g-edad" data-source="sel_demo" style="min-height:190px"></div>
+      </div>
+      <div class="tarjeta graf" id="c-sexo">
+        <h2>Visitas por sexo</h2>
+        <div class="lienzo" data-draw="g-sexo" data-source="sel_demo" style="min-height:120px"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 2 TIEMPOS DE ESPERA ===================== -->
+  <section class="seccion" id="tiempos" hidden>
+    <p class="lead" data-draw="lead-tiempos">—</p>
+    <div class="kpis">
+      <div class="tarjeta kpi" id="k-mediana"><span class="k">Espera mediana</span><span class="v" data-source="sel" data-field="mediana" data-row="0" data-draw="k-mediana">—</span><span class="n">desde la llegada hasta la atención</span></div>
+      <div class="tarjeta kpi" id="k-p90"><span class="k">Percentil 90</span><span class="v nar" data-source="sel" data-field="p90" data-row="0" data-draw="k-p90">—</span><span class="n">1 de cada 10 espera más</span></div>
+      <div class="tarjeta kpi" id="k-prof"><span class="k">Espera del profesional</span><span class="v" data-source="sel" data-field="espera_profesional" data-row="0" data-draw="k-prof">—</span><span class="n">mediana entre quienes pasan por ella</span></div>
+      <div class="tarjeta kpi" id="k-total"><span class="k">Tiempo total en el centro</span><span class="v" data-source="sel" data-field="tiempo_total" data-row="0" data-draw="k-total">—</span><span class="n">mediana, de la llegada al cierre</span></div>
+    </div>
+    <div class="rejilla">
+      <div class="tarjeta graf" id="c-unidades">
+        <h2>Espera por centro y localidad (min)</h2>
+        <p class="nota">Mediana y percentil 90. Con Santo Domingo seleccionado solo, se abre por sus seis localidades.</p>
+        <div class="lienzo" data-draw="g-unidades" data-source="sel_unidades"></div>
+      </div>
+      <div class="tarjeta graf" id="c-etapas">
+        <h2>Dónde se acumula la espera (min)</h2>
+        <p class="nota">Mediana de cada etapa entre las visitas que pasan por ella.</p>
+        <div class="lienzo" data-draw="g-etapas" data-source="sel" style="min-height:140px"></div>
+      </div>
+      <div class="tarjeta graf ancho" id="c-deptos">
+        <h2>Espera por departamento (min)</h2>
+        <p class="nota">Solo los departamentos aptos para medir esperas. Mediana y percentil 90.</p>
+        <div class="lienzo" data-draw="g-deptos" data-source="sel_deptos"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 3 DÍA Y HORA ===================== -->
+  <section class="seccion" id="diayhora" hidden>
+    <div class="rejilla">
+      <div class="tarjeta graf ancho" id="c-calor">
+        <h2>Horas pico por día y hora citada</h2>
+        <div class="conmuta" role="group" aria-label="Medida del mapa de calor">
+          <button type="button" id="m-visitas" aria-pressed="true" data-medida="visitas">Volumen de visitas</button>
+          <button type="button" id="m-espera" aria-pressed="false" data-medida="mediana">Espera mediana</button>
+        </div>
+        <p class="nota">El volumen muestra cuándo llegan los pacientes; la espera, cuánto esperan a esa hora (celdas con menos de 30 visitas medibles en blanco).</p>
+        <div class="desliza"><div class="lienzo" data-draw="g-calor" data-source="sel_calor" style="min-width:600px"></div></div>
+      </div>
+      <div class="tarjeta graf" id="c-horas">
+        <h2>Espera según la hora citada (min)</h2>
+        <p class="nota">Mediana y percentil 90 de la espera desde la llegada.</p>
+        <div class="lienzo" data-draw="g-horas" data-source="sel_horas" style="min-height:220px"></div>
+      </div>
+      <div class="tarjeta graf" id="c-dias">
+        <h2>Visitas por día de la semana</h2>
+        <div class="lienzo" data-draw="g-dias" data-source="sel_calor" style="min-height:190px"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== CUELLOS ===================== -->
+  <section class="seccion" id="cuellos" hidden>
+    <p class="lead">Un tramo es cuello de botella cuando su percentil 90 semanal supera la cerca de Tukey de su propio año de referencia (Q3 + 1,5 × RIC) durante tres semanas seguidas. Son relevantes los episodios cuyo percentil 90 supera 15 minutos. Esta pestaña no depende de los filtros.</p>
+    <div class="rejilla">
+      <div class="tarjeta graf" id="c-comparacion">
+        <h2>Cuellos de botella relevantes por centro y tramo</h2>
+        <div class="desliza">
+          <table class="tabla" data-source="comparacion" data-row-key="tramo">
+            <thead><tr><th data-field="tramo">Tramo</th><th class="num" data-field="Santo Domingo">Santo Domingo</th><th class="num" data-field="Santiago">Santiago</th><th class="num" data-field="Azua">Azua</th><th class="num" data-field="Total">Total</th></tr></thead>
+            <tbody data-draw="t-comparacion"></tbody>
+          </table>
+        </div>
+        <p class="nota">En Santo Domingo se detectan por localidad. Analizado como un solo bloque, el centro no muestra ningún episodio: el del Edificio 1-A se diluye entre las casi 6.000 visitas semanales del centro.</p>
+      </div>
+      <div class="tarjeta graf" id="c-sensibilidad">
+        <h2>Sensibilidad del criterio</h2>
+        <div class="desliza">
+          <table class="tabla" data-source="sensibilidad" data-row-key="id">
+            <thead><tr><th data-field="factor">Factor del RIC</th><th class="num" data-field="semanas">Semanas seguidas</th><th class="num" data-field="episodios">Episodios</th><th class="num" data-field="relevantes">Relevantes</th></tr></thead>
+            <tbody data-draw="t-sensibilidad"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="tarjeta graf ancho" id="c-serie">
+        <h2>Percentil 90 semanal frente a su cerca de Tukey (min)</h2>
+        <div class="fil">
+          <label for="s-unidad">Centro o localidad<select id="s-unidad" data-draw="s-unidad" data-source="serie"></select></label>
+          <label for="s-tramo">Tramo<select id="s-tramo" data-draw="s-tramo" data-source="serie"></select></label>
+        </div>
+        <div class="lienzo" data-draw="g-serie" data-source="serie episodios" style="min-height:250px"></div>
+        <p class="nota">Gris: año de referencia (oct. 2024 – sep. 2025). Petróleo: período de análisis. Línea naranja punteada: cerca de Tukey. Puntos rojos: semanas de un episodio.</p>
+      </div>
+      <div class="tarjeta graf ancho" id="c-episodios">
+        <h2>Los 13 episodios detectados</h2>
+        <div class="desliza">
+          <table class="tabla" data-source="episodios" data-row-key="id">
+            <thead><tr><th data-field="centro">Centro</th><th data-field="localidad">Localidad</th><th data-field="tramo">Tramo</th><th data-field="inicio">Inicio</th><th data-field="fin">Fin</th><th class="num" data-field="semanas">Semanas</th><th class="num" data-field="cerca">Cerca (min)</th><th class="num" data-field="p90_max">P90 máx. (min)</th><th data-field="relevante">Relevancia</th></tr></thead>
+            <tbody data-draw="t-episodios"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== INASISTENCIA ===================== -->
+  <section class="seccion" id="inasistencia" hidden>
+    <p class="lead">Análisis exploratorio: las cifras muestran asociaciones, no causas.</p>
+    <div class="rejilla">
+      <div class="tarjeta graf" id="c-anticipacion">
+        <h2>Inasistencia según días de anticipación de la cita</h2>
+        <p class="nota">Sigue los filtros de arriba.</p>
+        <div class="lienzo" data-draw="g-anticipacion" data-source="sel_antic"></div>
+      </div>
+      <div class="tarjeta graf" id="c-siguiente">
+        <h2>¿Falta más a su siguiente cita quien esperó más?</h2>
+        <p class="nota">Inasistencia a la siguiente cita (60 días) por quintil de espera en la visita atendida, minutos. Todos los centros.</p>
+        <div class="lienzo" data-draw="g-siguiente" data-source="siguiente"></div>
+      </div>
+      <div class="tarjeta graf ancho" id="c-spearman">
+        <h2>Carga del día y espera: correlación de Spearman</h2>
+        <p class="nota">Cerca de 1, la espera sube con la demanda del día; cerca de 0, depende de cómo se reparten las citas en el horario.</p>
+        <div class="lienzo" data-draw="g-spearman" data-source="spearman" style="min-height:260px"></div>
+      </div>
+    </div>
+  </section>
+
+  <details id="definiciones">
+    <summary>Definiciones y criterios</summary>
+    <p class="nota" style="margin-top:8px">Datos del sistema de gestión de citas de la ADR, seudonimizados y agregados por localidad y área: el tablero no contiene registros de pacientes. Tres centros: Santo Domingo (edificios 1-A, 1-B, 2-A y 4-A, SD Este y SD Oeste), Santiago y Azua. Los tiempos usan solo las visitas con secuencia completa, excluyen los departamentos con registro diferido (Estudios e Imágenes, Terapia del Lenguaje, Intervención Temprana, Odontología y Psicopedagogía) y descartan la primera y la última semana del período. La inasistencia se calcula sobre las citas atendidas, no presentadas o con llegada sin atención. Sin filtros, las cifras coinciden con el trabajo de grado del Grupo 1.</p>
+  </details>
+</div>
+
+<script>{
+  // ---------- utilidades compartidas ----------
+  window.ADR = window.ADR || {};
+  const A = window.ADR;
+  A.C = { pet: '#0A4E59', nar: '#C97B3E', azu: '#54839B', cel: '#7FA8B6', roj: '#B01C00', gris: '#5E6E75', suave: '#E8EDEF', tinta: '#1E2B30' };
+  A.vista = { escala: 'conteo', medida: 'visitas', unidad: 'Localidad|Edificio 1-A', tramo: 'Tiempo total' };
+  A.fmt = (x, d = 0) => x == null || Number.isNaN(x) ? '—' : Number(x).toLocaleString('es-DO', { minimumFractionDigits: d, maximumFractionDigits: d });
+  A.MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  // histograma "bin:conteo,..." (bin = décimas de minuto) -> pares numéricos, en caché
+  A._cache = new Map();
+  A.hist = (s) => { if (!s) return []; let h = A._cache.get(s); if (!h) { h = s.split(',').map((p) => { const i = p.indexOf(':'); return [+p.slice(0, i), +p.slice(i + 1)]; }); A._cache.set(s, h); } return h; };
+  // cuantil "lineal" (como numpy) sobre la suma de varios histogramas
+  A.cuantiles = (lista, ps, esc = 10) => {
+    const m = new Map(); lista.forEach((s) => A.hist(s).forEach(([b, c]) => m.set(b, (m.get(b) || 0) + c)));
+    const pares = [...m.entries()].sort((a, b) => a[0] - b[0]); const n = pares.reduce((t, p) => t + p[1], 0);
+    if (!n) return { n: 0, q: ps.map(() => null) };
+    const en = (k) => { let acu = 0; for (const [b, c] of pares) { acu += c; if (k < acu) return b / esc; } return pares[pares.length - 1][0] / esc; };
+    return { n, q: ps.map((p) => { const pos = (n - 1) * p, lo = Math.floor(pos), hi = Math.ceil(pos); const a = en(lo), b = en(hi); return a + (b - a) * (pos - lo); }) };
+  };
+  A.sel = () => { const p = dash.params(); return { c: p.c || [], l: p.l || [], d: p.d || [], a: p.a || [] }; };
+  A.pasa = (r, s) => (!s.c.length || s.c.includes(r.centro)) && (!s.l.length || s.l.includes(r.localidad)) && (!s.d.length || s.d.includes(r.departamento)) && (!s.a.length || s.a.includes(r.area));
+  A.estado = (el, st) => { if (st === 'ok') return true; el.replaceChildren(); const p = document.createElement('p'); p.className = 'nota'; p.textContent = st === 'error' ? 'No se pudieron cargar estos datos.' : (st === 'loading' ? 'Cargando…' : '—'); el.append(p); return false; };
+  A.tip = (el) => { let t = el.querySelector(':scope > .tip'); if (!t) { t = document.createElement('div'); t.className = 'tip'; t.hidden = true; el.append(t); }
+    return { show(ev, lineas) { t.replaceChildren(...lineas.map((l, i) => { const d = document.createElement('div'); d.textContent = l; if (!i) d.style.fontWeight = '600'; return d; })); t.hidden = false;
+      const r = el.getBoundingClientRect(); let x = ev.clientX - r.left + 12; const y = ev.clientY - r.top + 12; if (x + t.offsetWidth > el.clientWidth) x = Math.max(0, ev.clientX - r.left - t.offsetWidth - 12); t.style.left = x + 'px'; t.style.top = y + 'px'; },
+      hide() { t.hidden = true; } }; };
+  A.svg = (el, alto, aria) => { el.querySelectorAll(':scope > svg, :scope > p').forEach((n) => n.remove()); const w = Math.max(260, el.clientWidth);
+    return d3.select(el).insert('svg', ':first-child').attr('width', w).attr('height', alto).attr('viewBox', `0 0 ${w} ${alto}`).attr('role', 'img').attr('aria-label', aria); };
+  A.medir = (svg, textos) => { const t = svg.append('text').attr('font-size', 11); let m = 0; textos.forEach((s) => { t.text(s); m = Math.max(m, t.node().getComputedTextLength()); }); t.remove(); return m; };
+  A.corto = (v) => v >= 1e6 ? A.fmt(v / 1e6, 1) + ' M' : v >= 1e4 ? A.fmt(v / 1e3, 0) + ' mil' : v >= 1e3 ? A.fmt(v / 1e3, 1) + ' mil' : A.fmt(v);
+
+  // ---------- pestañas y conmutadores ----------
+  document.querySelectorAll('.pest').forEach((b) => b.addEventListener('click', () => {
+    document.querySelectorAll('.pest').forEach((x) => x.setAttribute('aria-selected', x === b ? 'true' : 'false'));
+    document.querySelectorAll('.seccion').forEach((s) => { s.hidden = s.id !== b.dataset.tab; });
+    dash.setLink(b.dataset.tab);
+  }));
+  const h0 = (location.hash || '').slice(1);
+  if (['panorama', 'tiempos', 'diayhora', 'cuellos', 'inasistencia'].includes(h0)) document.querySelectorAll(`.pest[data-tab="${h0}"]`).forEach((b) => b.click());
+  document.querySelectorAll('[data-medida]').forEach((b) => b.addEventListener('click', () => {
+    A.vista.medida = b.dataset.medida; document.querySelectorAll('[data-medida]').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); dash.draw('g-calor'); }));
+  document.querySelectorAll('[data-escala]').forEach((b) => b.addEventListener('click', () => {
+    A.vista.escala = b.dataset.escala; document.querySelectorAll('[data-escala]').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false')); dash.draw('g-estado'); }));
+  document.addEventListener('click', (ev) => { document.querySelectorAll('.multi-pan').forEach((p) => { if (!p.parentElement.contains(ev.target)) p.hidden = true; }); });
+}</script>
+
+<script>{
+  // ---------- cálculos de la selección (sin filtros = cifras del trabajo de grado) ----------
+  dash.calc('sel', {
+    inputs: ['base', 'pacientes'], title: 'Indicadores de la selección',
+    description: 'Suma los conteos de las localidades y áreas elegidas, une sus pacientes y calcula mediana y percentil 90 sobre los histogramas de espera.',
+    fn: (base, pacientes) => {
+      const s = ADR.sel(), filas = base.filter((r) => ADR.pasa(r, s)), celdas = new Set(filas.map((r) => r.celda));
+      const suma = (k) => filas.reduce((t, r) => t + r[k], 0);
+      const visitas = suma('visitas'), aten = suma('atendidas'), ns = suma('no_se_presento'), sin = suma('sin_atencion');
+      const ids = new Set(); pacientes.filter((p) => celdas.has(p.celda)).forEach((p) => { let acu = 0; p.delta.split(',').forEach((d) => { acu += +d; ids.add(acu); }); });
+      const ll = ADR.cuantiles(filas.map((r) => r.h_llegada), [0.25, 0.5, 0.75, 0.9]);
+      const med = (k) => ADR.cuantiles(filas.map((r) => r[k]), [0.5]).q[0];
+      return [{ visitas, pacientes: ids.size, atendidas: aten, no_se_presento: ns, reprogramadas: suma('reprogramadas'), canceladas: suma('canceladas'), sin_atencion: sin,
+        pct_atendidas: visitas ? aten / visitas * 100 : null, pct_inasistencia: aten + ns + sin ? ns / (aten + ns + sin) * 100 : null,
+        medibles: ll.n, q1: ll.q[0], mediana: ll.q[1], q3: ll.q[2], p90: ll.q[3],
+        tiempo_total: med('h_total'), espera_seguro: med('h_seguro'), espera_caja: med('h_caja'), espera_profesional: med('h_profesional') }];
+    }
+  });
+  dash.calc('sel_unidades', {
+    inputs: ['base'], title: 'Espera por centro o localidad',
+    description: 'Mediana y percentil 90 de la espera desde la llegada para cada centro elegido, o para cada localidad si solo se eligió Santo Domingo.',
+    fn: (base) => {
+      const s = ADR.sel(), filas = base.filter((r) => ADR.pasa(r, s));
+      const porLoc = (s.c.length === 1 && s.c[0] === 'Santo Domingo') || s.l.length > 0;
+      const g = d3.group(filas, (r) => porLoc ? r.localidad : r.centro);
+      return [...g].map(([unidad, rs]) => { const q = ADR.cuantiles(rs.map((r) => r.h_llegada), [0.5, 0.9]); return { unidad, medibles: q.n, mediana: q.q[0], p90: q.q[1] }; }).filter((r) => r.medibles >= 30);
+    }
+  });
+  dash.calc('sel_estado', {
+    inputs: ['base'], title: 'Estado final por centro',
+    description: 'Citas atendidas, no presentadas y otras (reprogramadas, canceladas, sin atención) por centro, para la selección.',
+    fn: (base) => {
+      const s = ADR.sel(), g = d3.group(base.filter((r) => ADR.pasa(r, s)), (r) => r.centro);
+      return [...g].map(([centro, rs]) => { const t = (k) => rs.reduce((a, r) => a + r[k], 0);
+        return { centro, atendidas: t('atendidas'), no_se_presento: t('no_se_presento'), otras: t('reprogramadas') + t('canceladas') + t('sin_atencion'), visitas: t('visitas') }; });
+    }
+  });
+  dash.calc('sel_calor', {
+    inputs: ['calor_base', 'base'], title: 'Visitas y espera por día y hora',
+    description: 'Suma las visitas por día y hora citada, y calcula la espera mediana sobre los histogramas de las celdas elegidas.',
+    fn: (calor_base, base) => {
+      const s = ADR.sel(), celdas = new Set(base.filter((r) => ADR.pasa(r, s)).map((r) => r.celda));
+      const g = d3.group(calor_base.filter((r) => celdas.has(r.celda)), (r) => r.dia + '|' + r.hora);
+      return [...g].map(([k, rs]) => { const [dia, hora] = k.split('|'); const q = ADR.cuantiles(rs.map((r) => r.h), [0.5]);
+        return { clave: k, dia, hora: +hora, visitas: rs.reduce((a, r) => a + r.visitas, 0), medibles: q.n, mediana: q.n >= 30 ? q.q[0] : null }; });
+    }
+  });
+  dash.calc('sel_mensual', {
+    inputs: ['mensual_base', 'base'], title: 'Visitas por mes', description: 'Visitas programadas por mes para la selección.',
+    fn: (mensual_base, base) => { const s = ADR.sel(), celdas = new Set(base.filter((r) => ADR.pasa(r, s)).map((r) => r.celda));
+      return [...d3.rollup(mensual_base.filter((r) => celdas.has(r.celda)), (v) => d3.sum(v, (r) => r.visitas), (r) => r.mes)].map(([mes, visitas]) => ({ mes, visitas })).sort((a, b) => a.mes.localeCompare(b.mes)); }
+  });
+  dash.calc('sel_antic', {
+    inputs: ['antic_base', 'base'], title: 'Inasistencia por anticipación', description: 'No presentadas sobre citas que llegaron a su fecha, por días de anticipación, para la selección.',
+    fn: (antic_base, base) => { const s = ADR.sel(), celdas = new Set(base.filter((r) => ADR.pasa(r, s)).map((r) => r.celda)); const orden = ['Mismo día', '1 a 7', '8 a 14', '15 a 30', '31 a 60', 'Más de 60'];
+      return [...d3.group(antic_base.filter((r) => celdas.has(r.celda)), (r) => r.anticipacion)].map(([anticipacion, rs]) => { const c = d3.sum(rs, (r) => r.citas), n = d3.sum(rs, (r) => r.no_se_presento); return { anticipacion, citas: c, pct_inasistencia: c ? n / c * 100 : null }; })
+        .sort((a, b) => orden.indexOf(a.anticipacion) - orden.indexOf(b.anticipacion)); }
+  });
+  dash.calc('sel_deptos', {
+    inputs: ['base'], title: 'Espera por departamento', description: 'Mediana y percentil 90 de la espera desde la llegada por departamento apto, para la selección.',
+    fn: (base) => { const s = ADR.sel(), g = d3.group(base.filter((r) => ADR.pasa(r, s)), (r) => r.departamento);
+      return [...g].map(([departamento, rs]) => { const q = ADR.cuantiles(rs.map((r) => r.h_llegada), [0.5, 0.9]); return { departamento, medibles: q.n, mediana: q.q[0], p90: q.q[1] }; }).filter((r) => r.medibles >= 30); }
+  });
+  dash.calc('sel_horas', {
+    inputs: ['calor_base', 'base'], title: 'Espera por hora citada', description: 'Mediana y percentil 90 de la espera (minutos enteros) por hora citada, para la selección.',
+    fn: (calor_base, base) => { const s = ADR.sel(), celdas = new Set(base.filter((r) => ADR.pasa(r, s)).map((r) => r.celda));
+      return [...d3.group(calor_base.filter((r) => celdas.has(r.celda)), (r) => r.hora)].map(([hora, rs]) => { const q = ADR.cuantiles(rs.map((r) => r.h), [0.5, 0.9]); return { hora, medibles: q.n, mediana: q.q[0], p90: q.q[1] }; })
+        .filter((r) => r.medibles >= 100).sort((a, b) => a.hora - b.hora); }
+  });
+  dash.calc('sel_demo', {
+    inputs: ['demografia', 'base'], title: 'Visitas por edad y sexo', description: 'Visitas programadas por rango de edad y sexo, para la selección.',
+    fn: (demografia, base) => { const s = ADR.sel(), celdas = new Set(base.filter((r) => ADR.pasa(r, s)).map((r) => r.celda));
+      return [...d3.rollup(demografia.filter((r) => celdas.has(r.celda)), (v) => d3.sum(v, (r) => r.visitas), (r) => r.rango_edad, (r) => r.sexo)]
+        .flatMap(([rango_edad, m]) => [...m].map(([sexo, visitas]) => ({ clave: rango_edad + '|' + sexo, rango_edad, sexo, visitas }))); }
+  });
+  dash.calc('comparacion', {
+    inputs: ['episodios'], title: 'Cuellos de botella relevantes por centro y tramo', description: 'Cuenta los episodios relevantes (P90 máximo de 15 minutos o más) por tramo y centro.',
+    fn: (episodios) => { const tramos = ['Espera en seguro', 'Tiempo total', 'Espera desde la llegada', 'Espera desde la hora citada', 'Espera del profesional', 'Espera en caja'], centros = ['Santo Domingo', 'Santiago', 'Azua'];
+      const rel = episodios.filter((e) => e.relevante === true);
+      const filas = tramos.map((t) => { const f = { tramo: t }; centros.forEach((c) => { f[c] = rel.filter((e) => e.tramo === t && e.centro === c).length; }); f.Total = centros.reduce((a, c) => a + f[c], 0); return f; });
+      const tot = { tramo: 'Total' }; centros.forEach((c) => { tot[c] = rel.filter((e) => e.centro === c).length; }); tot.Total = rel.length; return [...filas, tot]; }
+  });
+}</script>
+
+<script>{
+  // ---------- filtros de selección múltiple ----------
+  const multi = (nombre, param, rotuloTodos, opcionesDe) => dash.draw(nombre, (el) => {
+    const d = dash.data('base'); const s = ADR.sel(); const actual = s[param];
+    const grupos = d.status === 'ok' ? opcionesDe(d.data, s) : [];
+    const valores = grupos.flatMap((g) => g.items);
+    el.replaceChildren();
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'multi-btn' + (actual.length ? ' activo' : ''); btn.setAttribute('aria-haspopup', 'true');
+    btn.textContent = !actual.length ? rotuloTodos : (actual.length === 1 ? actual[0] : `${actual.length} seleccionados`);
+    const pan = document.createElement('div'); pan.className = 'multi-pan'; pan.hidden = true;
+    const acc = document.createElement('div'); acc.className = 'acciones';
+    const todo = document.createElement('button'); todo.type = 'button'; todo.textContent = 'Seleccionar todo';
+    const limpia = document.createElement('button'); limpia.type = 'button'; limpia.textContent = 'Limpiar';
+    acc.append(todo, limpia); pan.append(acc);
+    const aplicar = (lista) => { const p = {}; p[param] = lista.length === valores.length ? [] : lista;
+      if (param === 'c') p.l = []; if (param === 'd') p.a = []; dash.setParams(p); };
+    grupos.forEach((g) => {
+      if (g.titulo) { const t = document.createElement('div'); t.className = 'grupo'; t.textContent = g.titulo; pan.append(t); }
+      g.items.forEach((v) => { const lab = document.createElement('label'); const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = v; cb.checked = actual.includes(v);
+        cb.addEventListener('change', () => aplicar([...pan.querySelectorAll('input:checked')].map((x) => x.value)));
+        const sp = document.createElement('span'); sp.textContent = v; lab.append(cb, sp); pan.append(lab); });
+    });
+    todo.addEventListener('click', () => aplicar([])); limpia.addEventListener('click', () => aplicar([]));
+    btn.addEventListener('click', () => { const ab = pan.hidden; document.querySelectorAll('.multi-pan').forEach((p) => { p.hidden = true; }); pan.hidden = !ab; });
+    el.append(btn, pan);
+  });
+  const unicos = (rs, k) => [...new Set(rs.map((r) => r[k]))].sort((a, b) => a.localeCompare(b, 'es'));
+  multi('f-centro', 'c', 'Todos los centros', (rs) => [{ items: unicos(rs, 'centro') }]);
+  multi('f-localidad', 'l', 'Todas las localidades', (rs, s) => {
+    const rr = rs.filter((r) => !s.c.length || s.c.includes(r.centro));
+    return unicos(rr, 'centro').map((c) => ({ titulo: c, items: unicos(rr.filter((r) => r.centro === c), 'localidad') }));
+  });
+  multi('f-departamento', 'd', 'Todos los departamentos', (rs) => [{ items: unicos(rs, 'departamento') }]);
+  multi('f-area', 'a', 'Todas las áreas', (rs, s) => {
+    const rr = rs.filter((r) => (!s.d.length || s.d.includes(r.departamento)) && (!s.c.length || s.c.includes(r.centro)) && (!s.l.length || s.l.includes(r.localidad)));
+    return unicos(rr, 'departamento').map((d) => ({ titulo: d, items: unicos(rr.filter((r) => r.departamento === d), 'area') }));
+  });
+
+  // ---------- frase y tarjetas ----------
+  dash.draw('lead', (el) => {
+    const d = dash.data('sel'); if (d.status !== 'ok' || !d.data.length) { el.textContent = '—'; return; }
+    const r = d.data[0], s = ADR.sel();
+    const quien = s.l.length ? s.l.join(', ') : (s.c.length ? s.c.join(', ') : 'los tres centros');
+    el.textContent = r.mediana == null ? `En ${quien} hubo ${ADR.fmt(r.visitas)} visitas programadas; no hay suficientes visitas medibles para calcular la espera.`
+      : `En ${quien}, la mitad de los pacientes esperó ${ADR.fmt(r.mediana, 1)} minutos o menos desde su llegada hasta la atención, y uno de cada diez esperó más de ${ADR.fmt(r.p90, 1)} minutos.`;
+  });
+  const kpi = (nombre, campo, f) => dash.draw(nombre, (el) => { const d = dash.data('sel'); el.textContent = d.status === 'ok' && d.data.length ? f(d.data[0][campo]) : '—'; });
+  kpi('k-visitas', 'visitas', (x) => ADR.fmt(x));
+  kpi('k-pacientes', 'pacientes', (x) => ADR.fmt(x));
+  kpi('k-atendidas', 'pct_atendidas', (x) => x == null ? '—' : ADR.fmt(x, 1) + ' %');
+  kpi('k-inasistencia', 'pct_inasistencia', (x) => x == null ? '—' : ADR.fmt(x, 1) + ' %');
+  kpi('k-prof', 'espera_profesional', (x) => x == null ? '—' : ADR.fmt(x, 1) + ' min');
+  kpi('k-total', 'tiempo_total', (x) => x == null ? '—' : ADR.fmt(x, 1) + ' min');
+  dash.draw('lead-tiempos', (el) => {
+    const d = dash.data('sel'); if (d.status !== 'ok' || !d.data.length) { el.textContent = '—'; return; }
+    const r = d.data[0]; if (r.mediana == null) { el.textContent = 'No hay suficientes visitas medibles para esta selección.'; return; }
+    const mayor = (r.espera_seguro || 0) > (r.espera_profesional || 0) ? 'el registro del seguro' : 'la espera del profesional';
+    el.textContent = `De la llegada al cierre de la atención pasan ${ADR.fmt(r.tiempo_total, 1)} minutos en la mitad de las visitas; la etapa más lenta es ${mayor}.`;
+  });
+  kpi('k-mediana', 'mediana', (x) => x == null ? '—' : ADR.fmt(x, 1) + ' min');
+  kpi('k-p90', 'p90', (x) => x == null ? '—' : ADR.fmt(x, 1) + ' min');
+}</script>
+
+<script>{
+  // ---------- gráficos del análisis descriptivo ----------
+  const C = ADR.C;
+  const barrasH = (el, datos, aria, color, sufijo, info, dec = 1) => {
+    const alto = 12 + datos.length * 30, svg = ADR.svg(el, alto, aria);
+    if (!datos.length) { svg.attr('height', 30); svg.append('text').attr('y', 18).text('Sin datos suficientes para esta selección.'); return; }
+    const W = +svg.attr('width'), izq = ADR.medir(svg, datos.map((x) => x[0])) + 12;
+    const x = d3.scaleLinear().domain([0, d3.max(datos, (x) => x[1]) || 1]).range([izq, W - 70]);
+    const tip = ADR.tip(el);
+    const g = svg.selectAll('g.b').data(datos).join('g').attr('class', 'b').attr('transform', (r, i) => `translate(0,${6 + i * 30})`);
+    g.append('text').attr('x', izq - 8).attr('y', 11).attr('dy', '0.35em').attr('text-anchor', 'end').attr('class', 'et').text((r) => r[0]);
+    g.append('rect').attr('x', izq).attr('height', 22).attr('rx', 4).attr('width', (r) => Math.max(1, x(r[1]) - izq)).attr('fill', (r, i) => typeof color === 'function' ? color(r, i) : color)
+      .on('pointermove', (ev, r) => tip.show(ev, info(r))).on('pointerleave', tip.hide);
+    g.append('text').attr('x', (r) => x(r[1]) + 6).attr('y', 11).attr('dy', '0.35em').attr('class', 'et').text((r) => ADR.fmt(r[1], dec) + sufijo);
+  };
+  dash.draw('g-unidades', (el) => {
+    const d = dash.data('sel_unidades'); if (!ADR.estado(el, d.status)) return;
+    const filas = [...d.data].sort((a, b) => a.mediana - b.mediana), fila = 32, alto = Math.max(70, filas.length * fila + 44);
+    const svg = ADR.svg(el, alto, 'Mediana y percentil 90 de la espera por centro o localidad');
+    if (!filas.length) { svg.append('text').attr('y', 18).text('Sin suficientes visitas medibles.'); return; }
+    const W = +svg.attr('width'), izq = ADR.medir(svg, filas.map((r) => r.unidad)) + 12;
+    const x = d3.scaleLinear().domain([0, d3.max(filas, (r) => r.p90) * 1.05]).range([izq, W - 90]);
+    const tip = ADR.tip(el);
+    const ley = svg.append('g').attr('transform', `translate(${izq},8)`);
+    [['Mediana', C.pet], ['Percentil 90', C.nar]].forEach(([t, c], i) => { ley.append('circle').attr('cx', i * 100).attr('r', 5).attr('fill', c); ley.append('text').attr('x', i * 100 + 9).attr('dy', '0.35em').text(t); });
+    const g = svg.selectAll('g.u').data(filas).join('g').attr('class', 'u').attr('transform', (r, i) => `translate(0,${34 + i * fila})`);
+    g.append('text').attr('x', izq - 8).attr('dy', '0.35em').attr('text-anchor', 'end').attr('class', 'et').text((r) => r.unidad);
+    g.append('line').attr('x1', (r) => x(r.mediana)).attr('x2', (r) => x(r.p90)).attr('stroke', C.suave).attr('stroke-width', 3);
+    g.append('circle').attr('cx', (r) => x(r.mediana)).attr('r', 7).attr('fill', C.pet);
+    g.append('circle').attr('cx', (r) => x(r.p90)).attr('r', 7).attr('fill', C.nar);
+    g.append('text').attr('x', (r) => x(r.p90) + 12).attr('dy', '0.35em').attr('class', 'et').text((r) => `${ADR.fmt(r.mediana, 1)} · ${ADR.fmt(r.p90, 1)}`);
+    g.append('rect').attr('x', izq).attr('y', -fila / 2).attr('width', W - izq).attr('height', fila).attr('fill', 'transparent')
+      .on('pointermove', (ev, r) => tip.show(ev, [r.unidad, `Mediana: ${ADR.fmt(r.mediana, 1)} min`, `Percentil 90: ${ADR.fmt(r.p90, 1)} min`, `${ADR.fmt(r.medibles)} visitas medibles`])).on('pointerleave', tip.hide);
+  });
+  const puntos = (el, filas, nombre, aria) => {
+    const fila = 32, alto = Math.max(70, filas.length * fila + 44), svg = ADR.svg(el, alto, aria);
+    if (!filas.length) { svg.append('text').attr('y', 18).text('Sin suficientes visitas medibles.'); return; }
+    const W = +svg.attr('width'), izq = ADR.medir(svg, filas.map(nombre)) + 12, x = d3.scaleLinear().domain([0, d3.max(filas, (r) => r.p90) * 1.05]).range([izq, W - 90]), tip = ADR.tip(el);
+    const ley = svg.append('g').attr('transform', `translate(${izq},8)`);
+    [['Mediana', C.pet], ['Percentil 90', C.nar]].forEach(([t, c], i) => { ley.append('circle').attr('cx', i * 100).attr('r', 5).attr('fill', c); ley.append('text').attr('x', i * 100 + 9).attr('dy', '0.35em').text(t); });
+    const g = svg.selectAll('g.u').data(filas).join('g').attr('class', 'u').attr('transform', (r, i) => `translate(0,${34 + i * fila})`);
+    g.append('text').attr('x', izq - 8).attr('dy', '0.35em').attr('text-anchor', 'end').attr('class', 'et').text(nombre);
+    g.append('line').attr('x1', (r) => x(r.mediana)).attr('x2', (r) => x(r.p90)).attr('stroke', C.suave).attr('stroke-width', 3);
+    g.append('circle').attr('cx', (r) => x(r.mediana)).attr('r', 7).attr('fill', C.pet);
+    g.append('circle').attr('cx', (r) => x(r.p90)).attr('r', 7).attr('fill', C.nar);
+    g.append('text').attr('x', (r) => x(r.p90) + 12).attr('dy', '0.35em').attr('class', 'et').text((r) => `${ADR.fmt(r.mediana, 1)} · ${ADR.fmt(r.p90, 1)}`);
+    g.append('rect').attr('x', izq).attr('y', -fila / 2).attr('width', W - izq).attr('height', fila).attr('fill', 'transparent')
+      .on('pointermove', (ev, r) => tip.show(ev, [nombre(r), `Mediana: ${ADR.fmt(r.mediana, 1)} min`, `Percentil 90: ${ADR.fmt(r.p90, 1)} min`, `${ADR.fmt(r.medibles)} visitas medibles`])).on('pointerleave', tip.hide);
+  };
+  dash.draw('g-deptos', (el) => { const d = dash.data('sel_deptos'); if (!ADR.estado(el, d.status)) return;
+    puntos(el, [...d.data].sort((a, b) => a.mediana - b.mediana), (r) => r.departamento, 'Mediana y percentil 90 de la espera por departamento'); });
+  dash.draw('g-horas', (el) => {
+    const d = dash.data('sel_horas'); if (!ADR.estado(el, d.status)) return;
+    const filas = d.data, alto = 220, svg = ADR.svg(el, alto, 'Espera según la hora citada'); if (!filas.length) return;
+    const W = +svg.attr('width'), x = d3.scalePoint().domain(filas.map((r) => r.hora)).range([30, W - 30]), y = d3.scaleLinear().domain([0, d3.max(filas, (r) => r.p90) * 1.15]).range([alto - 24, 24]), tip = ADR.tip(el);
+    [['p90', C.nar, 'Percentil 90'], ['mediana', C.pet, 'Mediana']].forEach(([k, c]) => {
+      svg.append('path').datum(filas).attr('fill', 'none').attr('stroke', c).attr('stroke-width', 2.5).attr('d', d3.line().x((r) => x(r.hora)).y((r) => y(r[k])));
+      svg.selectAll('circle.' + k).data(filas).join('circle').attr('class', k).attr('cx', (r) => x(r.hora)).attr('cy', (r) => y(r[k])).attr('r', 4).attr('fill', c);
+      svg.selectAll('text.' + k).data(filas).join('text').attr('class', 'et ' + k).attr('x', (r) => x(r.hora)).attr('y', (r) => y(r[k]) - 8).attr('text-anchor', 'middle').attr('font-size', 10).text((r) => ADR.fmt(r[k])); });
+    svg.selectAll('text.h').data(filas).join('text').attr('class', 'h').attr('x', (r) => x(r.hora)).attr('y', alto - 6).attr('text-anchor', 'middle').text((r) => `${r.hora}:00`);
+    const ley = svg.append('g').attr('transform', 'translate(30,8)'); [['Mediana', C.pet], ['Percentil 90', C.nar]].forEach(([t, c], i) => { ley.append('circle').attr('cx', i * 100).attr('r', 5).attr('fill', c); ley.append('text').attr('x', i * 100 + 9).attr('dy', '0.35em').text(t); });
+    svg.append('rect').attr('width', W).attr('height', alto).attr('fill', 'transparent').on('pointermove', (ev) => { const px = d3.pointer(ev)[0]; const r = filas.reduce((b, f) => Math.abs(x(f.hora) - px) < Math.abs(x(b.hora) - px) ? f : b, filas[0]);
+      tip.show(ev, [`Citas de las ${r.hora}:00`, `Mediana: ${ADR.fmt(r.mediana, 1)} min`, `Percentil 90: ${ADR.fmt(r.p90, 1)} min`, `${ADR.fmt(r.medibles)} visitas medibles`]); }).on('pointerleave', tip.hide);
+  });
+  dash.draw('g-edad', (el) => {
+    const d = dash.data('sel_demo'); if (!ADR.estado(el, d.status)) return;
+    const orden = ['0-4', '5-14', '15-29', '30-59', '60+'], datos = orden.map((r) => ({ r, v: d3.sum(d.data.filter((x) => x.rango_edad === r), (x) => x.visitas) })).filter((x) => x.v > 0);
+    const alto = 190, svg = ADR.svg(el, alto, 'Visitas por rango de edad'); if (!datos.length) return;
+    const W = +svg.attr('width'), x = d3.scaleBand().domain(datos.map((x) => x.r)).range([0, W]).padding(0.3), y = d3.scaleLinear().domain([0, d3.max(datos, (x) => x.v) * 1.18]).range([alto - 22, 6]), tip = ADR.tip(el);
+    svg.selectAll('rect').data(datos).join('rect').attr('x', (r) => x(r.r)).attr('width', x.bandwidth()).attr('y', (r) => y(r.v)).attr('height', (r) => y(0) - y(r.v)).attr('rx', 4).attr('fill', C.nar).on('pointermove', (ev, r) => tip.show(ev, [`${r.r} años`, `${ADR.fmt(r.v)} visitas`])).on('pointerleave', tip.hide);
+    svg.selectAll('text.v').data(datos).join('text').attr('class', 'v et').attr('x', (r) => x(r.r) + x.bandwidth() / 2).attr('y', (r) => y(r.v) - 5).attr('text-anchor', 'middle').text((r) => ADR.corto(r.v));
+    svg.selectAll('text.x').data(datos).join('text').attr('class', 'x').attr('x', (r) => x(r.r) + x.bandwidth() / 2).attr('y', alto - 6).attr('text-anchor', 'middle').text((r) => r.r);
+  });
+  dash.draw('g-sexo', (el) => {
+    const d = dash.data('sel_demo'); if (!ADR.estado(el, d.status)) return;
+    const datos = ['Femenino', 'Masculino'].map((sx) => [sx, d3.sum(d.data.filter((x) => x.sexo === sx), (x) => x.visitas)]).filter((x) => x[1] > 0);
+    const tot = d3.sum(datos, (x) => x[1]) || 1;
+    barrasH(el, datos, 'Visitas por sexo', (x, i) => i ? C.azu : C.pet, '', (x) => [x[0], `${ADR.fmt(x[1])} visitas`, `${ADR.fmt(x[1] / tot * 100, 1)} %`], 0);
+  });
+  dash.draw('g-etapas', (el) => {
+    const d = dash.data('sel'); if (!ADR.estado(el, d.status)) return; const r = d.data[0] || {};
+    const datos = [['Registro del seguro', r.espera_seguro], ['Caja', r.espera_caja], ['Espera del profesional', r.espera_profesional]].filter((x) => x[1] != null);
+    barrasH(el, datos, 'Espera mediana por etapa', (x, i) => i === 2 ? C.pet : C.nar, ' min', (x) => [x[0], `Mediana: ${ADR.fmt(x[1], 1)} min`]);
+  });
+  dash.draw('g-estado', (el) => {
+    const d = dash.data('sel_estado'); if (!ADR.estado(el, d.status)) return;
+    const filas = [...d.data].sort((a, b) => b.visitas - a.visitas), pct = ADR.vista.escala === 'pct';
+    const alto = 230, svg = ADR.svg(el, alto, 'Visitas atendidas y no atendidas por centro');
+    if (!filas.length) return;
+    const W = +svg.attr('width'), claves = [['atendidas', 'Atendidas', C.pet], ['no_se_presento', 'No se presentó', C.nar], ['otras', 'Reprogramadas, canceladas o sin atención', C.cel]];
+    const val = (r, k) => pct ? r[k] / r.visitas * 100 : r[k];
+    const x = d3.scaleBand().domain(filas.map((r) => r.centro)).range([0, W]).padding(0.35);
+    const y = d3.scaleLinear().domain([0, pct ? 100 : d3.max(filas, (r) => r.visitas) * 1.12]).range([alto - 58, 8]);
+    const tip = ADR.tip(el);
+    filas.forEach((r) => { let acu = 0;
+      claves.forEach(([k, t, c]) => { const v = val(r, k); const y0 = y(acu), y1 = y(acu + v); acu += v;
+        svg.append('rect').attr('x', x(r.centro)).attr('width', x.bandwidth()).attr('y', y1).attr('height', Math.max(0, y0 - y1 - 1)).attr('fill', c)
+          .on('pointermove', (ev) => tip.show(ev, [`${r.centro} · ${t}`, `${ADR.fmt(r[k])} citas`, `${ADR.fmt(r[k] / r.visitas * 100, 1)} % del centro`])).on('pointerleave', tip.hide);
+        if (y0 - y1 > 16) svg.append('text').attr('x', x(r.centro) + x.bandwidth() / 2).attr('y', (y0 + y1) / 2).attr('dy', '0.35em').attr('text-anchor', 'middle').attr('fill', k === 'otras' ? C.tinta : '#fff').style('fill', k === 'otras' ? C.tinta : '#fff').text(pct ? ADR.fmt(v, 1) + ' %' : ADR.corto(r[k])); });
+      if (!pct) svg.append('text').attr('class', 'et').attr('x', x(r.centro) + x.bandwidth() / 2).attr('y', y(acu) - 5).attr('text-anchor', 'middle').text(ADR.fmt(r.visitas));
+      svg.append('text').attr('class', 'et').attr('x', x(r.centro) + x.bandwidth() / 2).attr('y', alto - 42).attr('text-anchor', 'middle').text(r.centro); });
+    const ley = svg.append('g').attr('transform', `translate(0,${alto - 16})`); let lx = 0;
+    claves.forEach(([, t, c]) => { ley.append('rect').attr('x', lx).attr('y', -5).attr('width', 10).attr('height', 10).attr('rx', 2).attr('fill', c); const tx = ley.append('text').attr('x', lx + 14).attr('dy', '0.35em').text(t); lx += 14 + tx.node().getComputedTextLength() + 16; });
+  });
+  dash.draw('g-dias', (el) => {
+    const d = dash.data('sel_calor'); if (!ADR.estado(el, d.status)) return;
+    const dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const datos = dias.map((dia) => ({ dia, visitas: d3.sum(d.data.filter((r) => r.dia === dia), (r) => r.visitas) }));
+    const alto = 190, svg = ADR.svg(el, alto, 'Visitas por día de la semana'), W = +svg.attr('width');
+    const x = d3.scaleBand().domain(dias).range([0, W]).padding(0.25), y = d3.scaleLinear().domain([0, (d3.max(datos, (r) => r.visitas) || 1) * 1.15]).range([alto - 22, 6]);
+    const tip = ADR.tip(el);
+    svg.selectAll('rect').data(datos).join('rect').attr('x', (r) => x(r.dia)).attr('width', x.bandwidth()).attr('y', (r) => y(r.visitas)).attr('height', (r) => y(0) - y(r.visitas)).attr('rx', 4).attr('fill', (r) => r.dia === 'Sábado' ? C.cel : C.pet)
+      .on('pointermove', (ev, r) => tip.show(ev, [r.dia, `${ADR.fmt(r.visitas)} visitas`])).on('pointerleave', tip.hide);
+    svg.selectAll('text.v').data(datos).join('text').attr('class', 'v et').attr('x', (r) => x(r.dia) + x.bandwidth() / 2).attr('y', (r) => y(r.visitas) - 5).attr('text-anchor', 'middle').text((r) => ADR.corto(r.visitas));
+    svg.selectAll('text.x').data(datos).join('text').attr('class', 'x').attr('x', (r) => x(r.dia) + x.bandwidth() / 2).attr('y', alto - 6).attr('text-anchor', 'middle').text((r) => W < 420 ? r.dia.slice(0, 3) : r.dia);
+  });
+  dash.draw('g-calor', (el) => {
+    const d = dash.data('sel_calor'); if (!ADR.estado(el, d.status)) return;
+    const dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'], m = ADR.vista.medida;
+    const horas = d3.range(6, 18).filter((h) => d.data.some((r) => r.hora === h && r.visitas > 0));
+    const alto = 24 + dias.length * 32 + 4, svg = ADR.svg(el, alto, 'Mapa de calor por día y hora citada');
+    if (!horas.length) return;
+    const W = +svg.attr('width'), izq = ADR.medir(svg, dias) + 12, cw = (W - izq) / horas.length;
+    const idx = new Map(d.data.map((r) => [r.dia + '|' + r.hora, r]));
+    const vals = d.data.map((r) => r[m]).filter((v) => v != null);
+    const col = d3.scaleLinear().domain([m === 'mediana' ? d3.min(vals) : 0, d3.max(vals) || 1]).range(['#F3F7F8', m === 'mediana' ? C.nar : C.pet]);
+    const tip = ADR.tip(el);
+    horas.forEach((h, j) => svg.append('text').attr('x', izq + j * cw + cw / 2).attr('y', 12).attr('text-anchor', 'middle').text(`${h}:00`));
+    dias.forEach((dia, i) => { const gy = 22 + i * 32;
+      svg.append('text').attr('x', izq - 8).attr('y', gy + 15).attr('dy', '0.35em').attr('text-anchor', 'end').attr('class', 'et').text(dia);
+      horas.forEach((h, j) => { const r = idx.get(dia + '|' + h), v = r ? r[m] : null, gx = izq + j * cw;
+        svg.append('rect').attr('x', gx + 1).attr('y', gy + 1).attr('width', cw - 2).attr('height', 28).attr('rx', 4).attr('fill', v == null ? '#FFFFFF' : col(v)).attr('stroke', C.suave)
+          .on('pointermove', (ev) => tip.show(ev, [`${dia}, ${h}:00`, r ? `${ADR.fmt(r.visitas)} visitas` : 'Sin visitas', r && r.mediana != null ? `Espera mediana: ${ADR.fmt(r.mediana)} min` : 'Espera: menos de 30 visitas medibles'])).on('pointerleave', tip.hide);
+        if (v != null && cw > 34) { const osc = d3.hsl(col(v)).l < 0.55; svg.append('text').attr('x', gx + cw / 2).attr('y', gy + 15).attr('dy', '0.35em').attr('text-anchor', 'middle').attr('font-size', 10).style('fill', osc ? '#fff' : C.tinta).text(m === 'visitas' ? ADR.corto(v) : ADR.fmt(v)); } }); });
+  });
+  dash.draw('g-mensual', (el) => {
+    const d = dash.data('sel_mensual'); if (!ADR.estado(el, d.status)) return;
+    const filas = d.data, alto = 190, svg = ADR.svg(el, alto, 'Visitas programadas por mes'); if (!filas.length) return;
+    const W = +svg.attr('width'), et = (m) => ADR.MESES[+m.slice(5, 7) - 1] + (W > 640 ? ' ' + m.slice(2, 4) : '');
+    const x = d3.scaleBand().domain(filas.map((r) => r.mes)).range([0, W]).padding(0.25), y = d3.scaleLinear().domain([0, d3.max(filas, (r) => r.visitas) * 1.18]).range([alto - 22, 6]);
+    const tip = ADR.tip(el);
+    svg.selectAll('rect').data(filas).join('rect').attr('x', (r) => x(r.mes)).attr('width', x.bandwidth()).attr('y', (r) => y(r.visitas)).attr('height', (r) => y(0) - y(r.visitas)).attr('rx', 4).attr('fill', C.pet)
+      .on('pointermove', (ev, r) => tip.show(ev, [`${ADR.MESES[+r.mes.slice(5, 7) - 1]} ${r.mes.slice(0, 4)}`, `${ADR.fmt(r.visitas)} visitas`])).on('pointerleave', tip.hide);
+    if (x.bandwidth() > 30) svg.selectAll('text.v').data(filas).join('text').attr('class', 'v et').attr('x', (r) => x(r.mes) + x.bandwidth() / 2).attr('y', (r) => y(r.visitas) - 5).attr('text-anchor', 'middle').text((r) => ADR.corto(r.visitas));
+    svg.selectAll('text.x').data(filas).join('text').attr('class', 'x').attr('x', (r) => x(r.mes) + x.bandwidth() / 2).attr('y', alto - 6).attr('text-anchor', 'middle').text((r) => et(r.mes));
+  });
+}</script>
+
+<script>{
+  // ---------- cuellos de botella ----------
+  const C = ADR.C;
+  const celda = (tr, txt, num) => { const td = document.createElement('td'); td.textContent = txt; if (num) td.className = 'num'; tr.append(td); return td; };
+  dash.draw('t-comparacion', (tb) => { const d = dash.data('comparacion'); tb.replaceChildren(); if (d.status !== 'ok') return;
+    d.data.forEach((r) => { const tr = document.createElement('tr'); if (r.tramo === 'Total') tr.className = 'total'; celda(tr, r.tramo); ['Santo Domingo', 'Santiago', 'Azua', 'Total'].forEach((c) => celda(tr, String(r[c]), true)); tb.append(tr); }); });
+  dash.draw('t-sensibilidad', (tb) => { const d = dash.data('sensibilidad'); tb.replaceChildren(); if (d.status !== 'ok') return;
+    d.data.forEach((r) => { const tr = document.createElement('tr'); const ad = r.factor === 1.5 && r.semanas === 3; if (ad) tr.className = 'total';
+      celda(tr, ADR.fmt(r.factor, 1) + (ad ? ' (adoptado)' : '')); celda(tr, String(r.semanas), true); celda(tr, String(r.episodios), true); celda(tr, String(r.relevantes), true); tb.append(tr); }); });
+  dash.draw('t-episodios', (tb) => { const d = dash.data('episodios'); tb.replaceChildren(); if (d.status !== 'ok') return;
+    [...d.data].sort((a, b) => a.inicio.localeCompare(b.inicio)).forEach((r) => { const tr = document.createElement('tr');
+      [r.centro, r.localidad, r.tramo, r.inicio, r.fin].forEach((t) => celda(tr, t)); celda(tr, String(r.semanas), true); celda(tr, ADR.fmt(r.cerca, 1), true); celda(tr, ADR.fmt(r.p90_max, 1), true);
+      const s = document.createElement('span'); s.className = 'chip ' + (r.relevante ? 'si' : 'no'); s.textContent = r.relevante ? 'Relevante' : 'Menor de 15 min'; celda(tr, '').append(s); tb.append(tr); }); });
+  dash.draw('s-unidad', (sel) => { const d = dash.data('serie'); if (d.status !== 'ok') { sel.replaceChildren(); return; }
+    sel.replaceChildren(); [['Centro', 'Centro completo'], ['Localidad', 'Localidad']].forEach(([n, t]) => { const g = document.createElement('optgroup'); g.label = t;
+      [...new Set(d.data.filter((r) => r.nivel === n).map((r) => r.unidad))].sort().forEach((u) => g.append(new Option(n === 'Centro' ? u + ' (centro)' : u, n + '|' + u))); sel.append(g); });
+    sel.value = ADR.vista.unidad; sel.onchange = () => { ADR.vista.unidad = sel.value; dash.draw('g-serie'); }; });
+  dash.draw('s-tramo', (sel) => { const d = dash.data('serie'); if (d.status !== 'ok') { sel.replaceChildren(); return; }
+    sel.replaceChildren(...[...new Set(d.data.map((r) => r.tramo))].map((t) => new Option(t, t))); sel.value = ADR.vista.tramo; sel.onchange = () => { ADR.vista.tramo = sel.value; dash.draw('g-serie'); }; });
+  dash.draw('g-serie', (el) => {
+    const d = dash.data('serie'), e = dash.data('episodios'); if (!ADR.estado(el, d.status)) return;
+    const [nivel, unidad] = ADR.vista.unidad.split('|'), tramo = ADR.vista.tramo;
+    const filas = d.data.filter((r) => r.nivel === nivel && r.unidad === unidad && r.tramo === tramo).map((r) => ({ ...r, fecha: new Date(r.semana + 'T00:00:00Z') })).sort((a, b) => a.fecha - b.fecha);
+    const alto = 250, svg = ADR.svg(el, alto, `Percentil 90 semanal de ${tramo} en ${unidad} frente a su cerca de Tukey`);
+    if (!filas.length) { svg.append('text').attr('y', 18).text('Sin serie para esta combinación (menos de 30 visitas por semana).'); return; }
+    const cerca = filas[0].cerca, eps = e.status === 'ok' && nivel === 'Localidad' ? e.data.filter((x) => x.localidad === unidad && x.tramo === tramo) : [];
+    const W = +svg.attr('width'), y = d3.scaleLinear().domain([0, Math.max(cerca, d3.max(filas, (r) => r.p90)) * 1.1]).nice().range([alto - 22, 10]);
+    const izq = ADR.medir(svg, y.ticks(5).map(String)) + 10, x = d3.scaleUtc().domain(d3.extent(filas, (r) => r.fecha)).range([izq, W - 10]);
+    svg.append('g').attr('transform', `translate(0,${alto - 22})`).call(d3.axisBottom(x).ticks(Math.max(3, Math.floor(W / 110))).tickFormat((t) => ADR.MESES[t.getUTCMonth()] + ' ' + t.getUTCFullYear()).tickSizeOuter(0)).call((g) => g.selectAll('line,.domain').attr('stroke', C.suave));
+    svg.append('g').attr('transform', `translate(${izq},0)`).call(d3.axisLeft(y).ticks(5).tickSize(-(W - izq - 10))).call((g) => g.select('.domain').remove()).call((g) => g.selectAll('line').attr('stroke', C.suave));
+    ['Referencia', 'Análisis'].forEach((v) => svg.append('path').datum(filas.filter((r) => r.ventana === v)).attr('fill', 'none').attr('stroke-width', 2).attr('stroke', v === 'Análisis' ? C.pet : '#B7C3C8').attr('d', d3.line().x((r) => x(r.fecha)).y((r) => y(r.p90))));
+    svg.append('line').attr('x1', izq).attr('x2', W - 10).attr('y1', y(cerca)).attr('y2', y(cerca)).attr('stroke', C.nar).attr('stroke-dasharray', '6 4').attr('stroke-width', 2);
+    svg.append('text').attr('class', 'et').attr('x', W - 12).attr('y', y(cerca) - 7).attr('text-anchor', 'end').text(`Cerca: ${ADR.fmt(cerca, 1)} min`);
+    svg.selectAll('circle.ep').data(filas.filter((f) => f.ventana === 'Análisis' && eps.some((x) => f.semana >= x.inicio && f.semana <= x.fin))).join('circle').attr('class', 'ep').attr('cx', (r) => x(r.fecha)).attr('cy', (r) => y(r.p90)).attr('r', 4.5).attr('fill', C.roj);
+    const tip = ADR.tip(el), guia = svg.append('line').attr('y1', 10).attr('y2', alto - 22).attr('stroke', '#B7C3C8').attr('visibility', 'hidden');
+    svg.append('rect').attr('x', izq).attr('width', W - izq).attr('height', alto - 22).attr('fill', 'transparent')
+      .on('pointermove', (ev) => { const r = filas[Math.max(0, Math.min(filas.length - 1, d3.bisector((f) => f.fecha).center(filas, x.invert(d3.pointer(ev)[0]))))];
+        guia.attr('x1', x(r.fecha)).attr('x2', x(r.fecha)).attr('visibility', 'visible');
+        tip.show(ev, [`Semana del ${d3.utcFormat('%d-%m-%Y')(r.fecha)}`, `P90: ${ADR.fmt(r.p90, 1)} min`, `Cerca: ${ADR.fmt(r.cerca, 1)} min`, r.ventana === 'Análisis' ? (r.p90 > r.cerca ? 'Sobre la cerca' : 'Bajo la cerca') : 'Año de referencia']); })
+      .on('pointerleave', () => { tip.hide(); guia.attr('visibility', 'hidden'); });
+  });
+}</script>
+
+<script>{
+  // ---------- inasistencia y carga ----------
+  const C = ADR.C;
+  const columnas = (el, datos, et, val, aria, color, info) => {
+    const alto = 210, svg = ADR.svg(el, alto, aria); if (!datos.length) { svg.append('text').attr('y', 18).text('Sin datos para esta selección.'); return; }
+    const W = +svg.attr('width'), x = d3.scaleBand().domain(datos.map(et)).range([0, W]).padding(0.28), y = d3.scaleLinear().domain([0, d3.max(datos, val) * 1.18]).range([alto - 26, 6]);
+    const tip = ADR.tip(el);
+    svg.selectAll('rect').data(datos).join('rect').attr('x', (r) => x(et(r))).attr('width', x.bandwidth()).attr('y', (r) => y(val(r))).attr('height', (r) => y(0) - y(val(r))).attr('rx', 4).attr('fill', color).on('pointermove', (ev, r) => tip.show(ev, info(r))).on('pointerleave', tip.hide);
+    svg.selectAll('text.v').data(datos).join('text').attr('class', 'v et').attr('x', (r) => x(et(r)) + x.bandwidth() / 2).attr('y', (r) => y(val(r)) - 5).attr('text-anchor', 'middle').text((r) => ADR.fmt(val(r), 1) + ' %');
+    svg.selectAll('text.x').data(datos).join('text').attr('class', 'x').attr('x', (r) => x(et(r)) + x.bandwidth() / 2).attr('y', alto - 8).attr('text-anchor', 'middle').text(et);
+  };
+  dash.draw('g-anticipacion', (el) => { const d = dash.data('sel_antic'); if (!ADR.estado(el, d.status)) return;
+    columnas(el, d.data, (r) => r.anticipacion, (r) => r.pct_inasistencia, 'Inasistencia según días de anticipación', C.roj, (r) => [`${r.anticipacion} días`, `Inasistencia: ${ADR.fmt(r.pct_inasistencia, 1)} %`, `${ADR.fmt(r.citas)} citas`]); });
+  dash.draw('g-siguiente', (el) => { const d = dash.data('siguiente'); if (!ADR.estado(el, d.status)) return;
+    columnas(el, d.data, (r) => `${ADR.fmt(r.espera_min)}–${ADR.fmt(r.espera_max)}`, (r) => r.pct_inasistencia, 'Inasistencia a la siguiente cita por quintil de espera', C.nar, (r) => [r.quintil, `Espera de ${ADR.fmt(r.espera_min, 1)} a ${ADR.fmt(r.espera_max, 1)} min`, `Faltó a la siguiente: ${ADR.fmt(r.pct_inasistencia, 1)} %`, `${ADR.fmt(r.visitas)} pares de visitas`]); });
+  dash.draw('g-spearman', (el) => {
+    const d = dash.data('spearman'); if (!ADR.estado(el, d.status)) return;
+    const datos = [...d.data].sort((a, b) => (a.nivel === b.nivel ? b.rho - a.rho : (a.nivel === 'Centro' ? -1 : 1))), nombre = (r) => r.nivel === 'Centro' ? `${r.unidad} (centro)` : r.unidad;
+    const fila = 26, alto = datos.length * fila + 30, svg = ADR.svg(el, alto, 'Correlación de Spearman entre carga diaria y espera');
+    const W = +svg.attr('width'), izq = ADR.medir(svg, datos.map(nombre)) + 12, x = d3.scaleLinear().domain([-0.1, 1]).range([izq, W - 50]), tip = ADR.tip(el);
+    svg.append('line').attr('x1', x(0)).attr('x2', x(0)).attr('y1', 4).attr('y2', alto - 18).attr('stroke', C.suave);
+    const g = svg.selectAll('g.b').data(datos).join('g').attr('class', 'b').attr('transform', (r, i) => `translate(0,${8 + i * fila})`);
+    g.append('text').attr('x', izq - 8).attr('y', 9).attr('dy', '0.35em').attr('text-anchor', 'end').attr('class', 'et').text(nombre);
+    g.append('rect').attr('x', (r) => Math.min(x(0), x(r.rho))).attr('width', (r) => Math.max(1, Math.abs(x(r.rho) - x(0)))).attr('height', 18).attr('rx', 4).attr('fill', (r) => r.nivel === 'Centro' ? C.nar : C.pet).on('pointermove', (ev, r) => tip.show(ev, [nombre(r), `rho = ${ADR.fmt(r.rho, 3)}`])).on('pointerleave', tip.hide);
+    g.append('text').attr('x', (r) => Math.max(x(0), x(r.rho)) + 6).attr('y', 9).attr('dy', '0.35em').attr('class', 'et').text((r) => ADR.fmt(r.rho, 3));
+  });
+}</script>
+
+</div>
+</body>
+</html>
