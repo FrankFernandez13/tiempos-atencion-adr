@@ -130,7 +130,15 @@
   .lienzo svg { display: block; overflow: visible; }
   .lienzo text { font-family: var(--sans); font-size: 11px; fill: var(--gris); }
   .lienzo text.et { fill: var(--tinta); font-variant-numeric: tabular-nums; }
-  .tip { position: absolute; pointer-events: none; background: #fff; border: 1px solid var(--linea); box-shadow: 0 6px 18px rgba(10,78,89,.18); border-radius: 6px; padding: 6px 9px; font-size: 12px; color: var(--tinta); white-space: nowrap; z-index: 10; }
+  .tip { position: absolute; pointer-events: none; background: #1B2733; border: 1px solid #2E3D4A; box-shadow: 0 10px 28px rgba(0,0,0,.28); border-radius: 12px; padding: 12px 14px; font-size: 13px; color: #FFFFFF; white-space: nowrap; z-index: 30; min-width: 230px; }
+  .tip-tit { font-weight: 700; font-size: 14px; letter-spacing: .03em; text-transform: uppercase; }
+  .tip-sub { color: #A9B6C0; font-size: 12px; margin-top: 2px; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid #33434F; }
+  .tip-fila { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 3px 0; }
+  .tip-et { display: flex; align-items: center; gap: 8px; color: #DDE5EA; }
+  .tip-cuadro { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .tip-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tip-total { margin-top: 6px; padding-top: 8px; border-top: 1px solid #33434F; }
+  .tip-total .tip-et { color: #FFFFFF; font-weight: 600; }
   .conmuta { display: inline-flex; border: 1px solid var(--linea); border-radius: 6px; overflow: hidden; align-self: flex-start; }
   .conmuta button { font: inherit; font-size: 12px; background: var(--panel); border: 0; padding: 4px 10px; color: var(--gris); cursor: pointer; }
   .conmuta button[aria-pressed="true"] { background: var(--pet); color: #fff; }
@@ -358,9 +366,22 @@
   A.sel = () => { const p = dash.params(); return { c: p.c || [], l: p.l || [], d: p.d || [], a: p.a || [] }; };
   A.pasa = (r, s) => (!s.c.length || s.c.includes(r.centro)) && (!s.l.length || s.l.includes(r.localidad)) && (!s.d.length || s.d.includes(r.departamento)) && (!s.a.length || s.a.includes(r.area));
   A.estado = (el, st) => { if (st === 'ok') return true; el.replaceChildren(); const p = document.createElement('p'); p.className = 'nota'; p.textContent = st === 'error' ? 'No se pudieron cargar estos datos.' : (st === 'loading' ? 'Cargando…' : '—'); el.append(p); return false; };
+  // contexto de filtros que se muestra bajo el título del cuadro emergente
+  A.contexto = () => { const s = A.sel(); const una = (l, todas, n) => !l.length ? todas : (l.length === 1 ? l[0] : `${l.length} ${n}`);
+    const partes = [`Área: ${una(s.a, 'Todas las áreas', 'áreas')}`]; if (s.d.length) partes.unshift(`Departamento: ${una(s.d, '', 'departamentos')}`); if (s.l.length) partes.unshift(una(s.l, '', 'localidades')); return partes.join(' · '); };
+  // cuadro emergente: {titulo, sub, filas: [[color, etiqueta, valor]], total: [etiqueta, valor]} o una lista de textos
   A.tip = (el) => { let t = el.querySelector(':scope > .tip'); if (!t) { t = document.createElement('div'); t.className = 'tip'; t.hidden = true; el.append(t); }
-    return { show(ev, lineas) { t.replaceChildren(...lineas.map((l, i) => { const d = document.createElement('div'); d.textContent = l; if (!i) d.style.fontWeight = '600'; return d; })); t.hidden = false;
-      const r = el.getBoundingClientRect(); let x = ev.clientX - r.left + 12; const y = ev.clientY - r.top + 12; if (x + t.offsetWidth > el.clientWidth) x = Math.max(0, ev.clientX - r.left - t.offsetWidth - 12); t.style.left = x + 'px'; t.style.top = y + 'px'; },
+    const div = (cls, txt) => { const d = document.createElement('div'); d.className = cls; if (txt != null) d.textContent = txt; return d; };
+    const aSpec = (l, color) => ({ titulo: l[0], filas: l.slice(1).map((x) => { const i = x.indexOf(': '); if (i > 0) return [color, x.slice(0, i), x.slice(i + 2)];
+      const m = x.match(/^([\d.,\s−-]+(?:%| %| min)?)\s+(.+)$/); return m ? [color, m[2].charAt(0).toUpperCase() + m[2].slice(1), m[1].trim()] : [null, x, '']; }) });
+    return { show(ev, contenido, color, conContexto = true) {
+      const s = Array.isArray(contenido) ? aSpec(contenido, color) : contenido;
+      const nodos = [div('tip-tit', s.titulo)]; const sub = s.sub !== undefined ? s.sub : (conContexto ? A.contexto() : null); if (sub) nodos.push(div('tip-sub', sub));
+      (s.filas || []).forEach(([c, et, v]) => { const f = div('tip-fila'); const e = div('tip-et'); if (c) { const m = div('tip-cuadro'); m.style.background = c; e.append(m); } e.append(document.createTextNode(et)); f.append(e, div('tip-val', v)); nodos.push(f); });
+      if (s.total) { const f = div('tip-fila tip-total'); f.append(div('tip-et', s.total[0]), div('tip-val', s.total[1])); nodos.push(f); }
+      t.replaceChildren(...nodos); t.hidden = false;
+      const r = el.getBoundingClientRect(); let x = ev.clientX - r.left + 14; let y = ev.clientY - r.top + 14;
+      if (x + t.offsetWidth > el.clientWidth) x = Math.max(0, ev.clientX - r.left - t.offsetWidth - 14); t.style.left = x + 'px'; t.style.top = y + 'px'; },
       hide() { t.hidden = true; } }; };
   A.svg = (el, alto, aria) => { el.querySelectorAll(':scope > svg, :scope > p').forEach((n) => n.remove()); const w = Math.max(260, el.clientWidth);
     return d3.select(el).insert('svg', ':first-child').attr('width', w).attr('height', alto).attr('viewBox', `0 0 ${w} ${alto}`).attr('role', 'img').attr('aria-label', aria); };
@@ -541,7 +562,7 @@
     const g = svg.selectAll('g.b').data(datos).join('g').attr('class', 'b').attr('transform', (r, i) => `translate(0,${6 + i * 30})`);
     g.append('text').attr('x', izq - 8).attr('y', 11).attr('dy', '0.35em').attr('text-anchor', 'end').attr('class', 'et').text((r) => r[0]);
     g.append('rect').attr('x', izq).attr('height', 22).attr('rx', 4).attr('width', (r) => Math.max(1, x(r[1]) - izq)).attr('fill', (r, i) => typeof color === 'function' ? color(r, i) : color)
-      .on('pointermove', (ev, r) => tip.show(ev, info(r))).on('pointerleave', tip.hide);
+      .on('pointermove', (ev, r) => tip.show(ev, info(r), typeof color === 'function' ? color(r, datos.indexOf(r)) : color)).on('pointerleave', tip.hide);
     g.append('text').attr('x', (r) => x(r[1]) + 6).attr('y', 11).attr('dy', '0.35em').attr('class', 'et').text((r) => ADR.fmt(r[1], dec) + sufijo);
   };
   dash.draw('g-unidades', (el) => {
@@ -561,7 +582,7 @@
     g.append('circle').attr('cx', (r) => x(r.p90)).attr('r', 7).attr('fill', C.nar);
     g.append('text').attr('x', (r) => x(r.p90) + 12).attr('dy', '0.35em').attr('class', 'et').text((r) => `${ADR.fmt(r.mediana, 1)} · ${ADR.fmt(r.p90, 1)}`);
     g.append('rect').attr('x', izq).attr('y', -fila / 2).attr('width', W - izq).attr('height', fila).attr('fill', 'transparent')
-      .on('pointermove', (ev, r) => tip.show(ev, [r.unidad, `Mediana: ${ADR.fmt(r.mediana, 1)} min`, `Percentil 90: ${ADR.fmt(r.p90, 1)} min`, `${ADR.fmt(r.medibles)} visitas medibles`])).on('pointerleave', tip.hide);
+      .on('pointermove', (ev, r) => tip.show(ev, { titulo: r.unidad, filas: [[C.pet, 'Mediana', `${ADR.fmt(r.mediana, 1)} min`], [C.nar, 'Percentil 90', `${ADR.fmt(r.p90, 1)} min`]], total: ['Visitas medibles', ADR.fmt(r.medibles)] })).on('pointerleave', tip.hide);
   });
   const puntos = (el, filas, nombre, aria) => {
     const fila = 32, alto = Math.max(70, filas.length * fila + 44), svg = ADR.svg(el, alto, aria);
@@ -576,7 +597,7 @@
     g.append('circle').attr('cx', (r) => x(r.p90)).attr('r', 7).attr('fill', C.nar);
     g.append('text').attr('x', (r) => x(r.p90) + 12).attr('dy', '0.35em').attr('class', 'et').text((r) => `${ADR.fmt(r.mediana, 1)} · ${ADR.fmt(r.p90, 1)}`);
     g.append('rect').attr('x', izq).attr('y', -fila / 2).attr('width', W - izq).attr('height', fila).attr('fill', 'transparent')
-      .on('pointermove', (ev, r) => tip.show(ev, [nombre(r), `Mediana: ${ADR.fmt(r.mediana, 1)} min`, `Percentil 90: ${ADR.fmt(r.p90, 1)} min`, `${ADR.fmt(r.medibles)} visitas medibles`])).on('pointerleave', tip.hide);
+      .on('pointermove', (ev, r) => tip.show(ev, { titulo: nombre(r), filas: [[C.pet, 'Mediana', `${ADR.fmt(r.mediana, 1)} min`], [C.nar, 'Percentil 90', `${ADR.fmt(r.p90, 1)} min`]], total: ['Visitas medibles', ADR.fmt(r.medibles)] })).on('pointerleave', tip.hide);
   };
   dash.draw('g-deptos', (el) => { const d = dash.data('sel_deptos'); if (!ADR.estado(el, d.status)) return;
     puntos(el, [...d.data].sort((a, b) => a.mediana - b.mediana), (r) => r.departamento, 'Mediana y percentil 90 de la espera por departamento'); });
@@ -591,14 +612,14 @@
     svg.selectAll('text.h').data(filas).join('text').attr('class', 'h').attr('x', (r) => x(r.hora)).attr('y', alto - 6).attr('text-anchor', 'middle').text((r) => `${r.hora}:00`);
     const ley = svg.append('g').attr('transform', 'translate(30,8)'); [['Mediana', C.pet], ['Percentil 90', C.nar]].forEach(([t, c], i) => { ley.append('circle').attr('cx', i * 100).attr('r', 5).attr('fill', c); ley.append('text').attr('x', i * 100 + 9).attr('dy', '0.35em').text(t); });
     svg.append('rect').attr('width', W).attr('height', alto).attr('fill', 'transparent').on('pointermove', (ev) => { const px = d3.pointer(ev)[0]; const r = filas.reduce((b, f) => Math.abs(x(f.hora) - px) < Math.abs(x(b.hora) - px) ? f : b, filas[0]);
-      tip.show(ev, [`Citas de las ${r.hora}:00`, `Mediana: ${ADR.fmt(r.mediana, 1)} min`, `Percentil 90: ${ADR.fmt(r.p90, 1)} min`, `${ADR.fmt(r.medibles)} visitas medibles`]); }).on('pointerleave', tip.hide);
+      tip.show(ev, { titulo: `Citas de las ${r.hora}:00`, filas: [[C.pet, 'Mediana', `${ADR.fmt(r.mediana, 1)} min`], [C.nar, 'Percentil 90', `${ADR.fmt(r.p90, 1)} min`]], total: ['Visitas medibles', ADR.fmt(r.medibles)] }); }).on('pointerleave', tip.hide);
   });
   dash.draw('g-edad', (el) => {
     const d = dash.data('sel_demo'); if (!ADR.estado(el, d.status)) return;
     const orden = ['0-4', '5-14', '15-29', '30-59', '60+'], datos = orden.map((r) => ({ r, v: d3.sum(d.data.filter((x) => x.rango_edad === r), (x) => x.visitas) })).filter((x) => x.v > 0);
     const alto = 190, svg = ADR.svg(el, alto, 'Visitas por rango de edad'); if (!datos.length) return;
     const W = +svg.attr('width'), x = d3.scaleBand().domain(datos.map((x) => x.r)).range([0, W]).padding(0.3), y = d3.scaleLinear().domain([0, d3.max(datos, (x) => x.v) * 1.18]).range([alto - 22, 6]), tip = ADR.tip(el);
-    svg.selectAll('rect').data(datos).join('rect').attr('x', (r) => x(r.r)).attr('width', x.bandwidth()).attr('y', (r) => y(r.v)).attr('height', (r) => y(0) - y(r.v)).attr('rx', 4).attr('fill', C.nar).on('pointermove', (ev, r) => tip.show(ev, [`${r.r} años`, `${ADR.fmt(r.v)} visitas`])).on('pointerleave', tip.hide);
+    svg.selectAll('rect').data(datos).join('rect').attr('x', (r) => x(r.r)).attr('width', x.bandwidth()).attr('y', (r) => y(r.v)).attr('height', (r) => y(0) - y(r.v)).attr('rx', 4).attr('fill', C.nar).on('pointermove', (ev, r) => tip.show(ev, { titulo: `${r.r} años`, filas: [[C.nar, 'Visitas', ADR.fmt(r.v)]] })).on('pointerleave', tip.hide);
     svg.selectAll('text.v').data(datos).join('text').attr('class', 'v et').attr('x', (r) => x(r.r) + x.bandwidth() / 2).attr('y', (r) => y(r.v) - 5).attr('text-anchor', 'middle').text((r) => ADR.corto(r.v));
     svg.selectAll('text.x').data(datos).join('text').attr('class', 'x').attr('x', (r) => x(r.r) + x.bandwidth() / 2).attr('y', alto - 6).attr('text-anchor', 'middle').text((r) => r.r);
   });
@@ -606,7 +627,7 @@
     const d = dash.data('sel_demo'); if (!ADR.estado(el, d.status)) return;
     const datos = ['Femenino', 'Masculino'].map((sx) => [sx, d3.sum(d.data.filter((x) => x.sexo === sx), (x) => x.visitas)]).filter((x) => x[1] > 0);
     const tot = d3.sum(datos, (x) => x[1]) || 1;
-    barrasH(el, datos, 'Visitas por sexo', (x, i) => i ? C.azu : C.pet, '', (x) => [x[0], `${ADR.fmt(x[1])} visitas`, `${ADR.fmt(x[1] / tot * 100, 1)} %`], 0);
+    barrasH(el, datos, 'Visitas por sexo', (x, i) => i ? C.azu : C.pet, '', (x) => [x[0], `Visitas: ${ADR.fmt(x[1])}`, `Del total: ${ADR.fmt(x[1] / tot * 100, 1)} %`], 0);
   });
   dash.draw('g-etapas', (el) => {
     const d = dash.data('sel'); if (!ADR.estado(el, d.status)) return; const r = d.data[0] || {};
@@ -626,7 +647,7 @@
     filas.forEach((r) => { let acu = 0;
       claves.forEach(([k, t, c]) => { const v = val(r, k); const y0 = y(acu), y1 = y(acu + v); acu += v;
         svg.append('rect').attr('x', x(r.centro)).attr('width', x.bandwidth()).attr('y', y1).attr('height', Math.max(0, y0 - y1 - 1)).attr('fill', c)
-          .on('pointermove', (ev) => tip.show(ev, [`${r.centro} · ${t}`, `${ADR.fmt(r[k])} citas`, `${ADR.fmt(r[k] / r.visitas * 100, 1)} % del centro`])).on('pointerleave', tip.hide);
+          .on('pointermove', (ev) => tip.show(ev, { titulo: r.centro, filas: claves.map(([kk, tt, cc]) => [cc, tt === 'Reprogramadas, canceladas o sin atención' ? 'Otras (reprog., canc.)' : tt, `${ADR.fmt(r[kk])} (${ADR.fmt(r[kk] / r.visitas * 100, 0)}%)`]), total: ['Total visitas', ADR.fmt(r.visitas)] })).on('pointerleave', tip.hide);
         if (y0 - y1 > 16) svg.append('text').attr('x', x(r.centro) + x.bandwidth() / 2).attr('y', (y0 + y1) / 2).attr('dy', '0.35em').attr('text-anchor', 'middle').attr('fill', k === 'otras' ? C.tinta : '#fff').style('fill', k === 'otras' ? C.tinta : '#fff').text(pct ? ADR.fmt(v, 1) + ' %' : ADR.corto(r[k])); });
       if (!pct) svg.append('text').attr('class', 'et').attr('x', x(r.centro) + x.bandwidth() / 2).attr('y', y(acu) - 5).attr('text-anchor', 'middle').text(ADR.fmt(r.visitas));
       svg.append('text').attr('class', 'et').attr('x', x(r.centro) + x.bandwidth() / 2).attr('y', alto - 42).attr('text-anchor', 'middle').text(r.centro); });
@@ -641,7 +662,7 @@
     const x = d3.scaleBand().domain(dias).range([0, W]).padding(0.25), y = d3.scaleLinear().domain([0, (d3.max(datos, (r) => r.visitas) || 1) * 1.15]).range([alto - 22, 6]);
     const tip = ADR.tip(el);
     svg.selectAll('rect').data(datos).join('rect').attr('x', (r) => x(r.dia)).attr('width', x.bandwidth()).attr('y', (r) => y(r.visitas)).attr('height', (r) => y(0) - y(r.visitas)).attr('rx', 4).attr('fill', (r) => r.dia === 'Sábado' ? C.cel : C.pet)
-      .on('pointermove', (ev, r) => tip.show(ev, [r.dia, `${ADR.fmt(r.visitas)} visitas`])).on('pointerleave', tip.hide);
+      .on('pointermove', (ev, r) => tip.show(ev, { titulo: r.dia, filas: [[r.dia === 'Sábado' ? C.cel : C.pet, 'Visitas', ADR.fmt(r.visitas)]] })).on('pointerleave', tip.hide);
     svg.selectAll('text.v').data(datos).join('text').attr('class', 'v et').attr('x', (r) => x(r.dia) + x.bandwidth() / 2).attr('y', (r) => y(r.visitas) - 5).attr('text-anchor', 'middle').text((r) => ADR.corto(r.visitas));
     svg.selectAll('text.x').data(datos).join('text').attr('class', 'x').attr('x', (r) => x(r.dia) + x.bandwidth() / 2).attr('y', alto - 6).attr('text-anchor', 'middle').text((r) => W < 420 ? r.dia.slice(0, 3) : r.dia);
   });
@@ -661,7 +682,7 @@
       svg.append('text').attr('x', izq - 8).attr('y', gy + 15).attr('dy', '0.35em').attr('text-anchor', 'end').attr('class', 'et').text(dia);
       horas.forEach((h, j) => { const r = idx.get(dia + '|' + h), v = r ? r[m] : null, gx = izq + j * cw;
         svg.append('rect').attr('x', gx + 1).attr('y', gy + 1).attr('width', cw - 2).attr('height', 28).attr('rx', 4).attr('fill', v == null ? '#FFFFFF' : col(v)).attr('stroke', C.suave)
-          .on('pointermove', (ev) => tip.show(ev, [`${dia}, ${h}:00`, r ? `${ADR.fmt(r.visitas)} visitas` : 'Sin visitas', r && r.mediana != null ? `Espera mediana: ${ADR.fmt(r.mediana)} min` : 'Espera: menos de 30 visitas medibles'])).on('pointerleave', tip.hide);
+          .on('pointermove', (ev) => tip.show(ev, { titulo: `${dia}, ${h}:00`, filas: [[C.pet, 'Visitas', r ? ADR.fmt(r.visitas) : '0'], [C.nar, 'Espera mediana', r && r.mediana != null ? `${ADR.fmt(r.mediana)} min` : 'pocos datos']] })).on('pointerleave', tip.hide);
         if (v != null && cw > 34) { const osc = d3.hsl(col(v)).l < 0.55; svg.append('text').attr('x', gx + cw / 2).attr('y', gy + 15).attr('dy', '0.35em').attr('text-anchor', 'middle').attr('font-size', 10).style('fill', osc ? '#fff' : C.tinta).text(m === 'visitas' ? ADR.corto(v) : ADR.fmt(v)); } }); });
   });
   dash.draw('g-mensual', (el) => {
@@ -671,7 +692,7 @@
     const x = d3.scaleBand().domain(filas.map((r) => r.mes)).range([0, W]).padding(0.25), y = d3.scaleLinear().domain([0, d3.max(filas, (r) => r.visitas) * 1.18]).range([alto - 22, 6]);
     const tip = ADR.tip(el);
     svg.selectAll('rect').data(filas).join('rect').attr('x', (r) => x(r.mes)).attr('width', x.bandwidth()).attr('y', (r) => y(r.visitas)).attr('height', (r) => y(0) - y(r.visitas)).attr('rx', 4).attr('fill', C.pet)
-      .on('pointermove', (ev, r) => tip.show(ev, [`${ADR.MESES[+r.mes.slice(5, 7) - 1]} ${r.mes.slice(0, 4)}`, `${ADR.fmt(r.visitas)} visitas`])).on('pointerleave', tip.hide);
+      .on('pointermove', (ev, r) => tip.show(ev, { titulo: `${ADR.MESES[+r.mes.slice(5, 7) - 1]} ${r.mes.slice(0, 4)}`, filas: [[C.pet, 'Visitas programadas', ADR.fmt(r.visitas)]] })).on('pointerleave', tip.hide);
     if (x.bandwidth() > 30) svg.selectAll('text.v').data(filas).join('text').attr('class', 'v et').attr('x', (r) => x(r.mes) + x.bandwidth() / 2).attr('y', (r) => y(r.visitas) - 5).attr('text-anchor', 'middle').text((r) => ADR.corto(r.visitas));
     svg.selectAll('text.x').data(filas).join('text').attr('class', 'x').attr('x', (r) => x(r.mes) + x.bandwidth() / 2).attr('y', alto - 6).attr('text-anchor', 'middle').text((r) => et(r.mes));
   });
@@ -715,7 +736,7 @@
     svg.append('rect').attr('x', izq).attr('width', W - izq).attr('height', alto - 22).attr('fill', 'transparent')
       .on('pointermove', (ev) => { const r = filas[Math.max(0, Math.min(filas.length - 1, d3.bisector((f) => f.fecha).center(filas, x.invert(d3.pointer(ev)[0]))))];
         guia.attr('x1', x(r.fecha)).attr('x2', x(r.fecha)).attr('visibility', 'visible');
-        tip.show(ev, [`Semana del ${d3.utcFormat('%d-%m-%Y')(r.fecha)}`, `P90: ${ADR.fmt(r.p90, 1)} min`, `Cerca: ${ADR.fmt(r.cerca, 1)} min`, r.ventana === 'Análisis' ? (r.p90 > r.cerca ? 'Sobre la cerca' : 'Bajo la cerca') : 'Año de referencia']); })
+        tip.show(ev, { titulo: `Semana del ${d3.utcFormat('%d-%m-%Y')(r.fecha)}`, sub: `${unidad} · ${tramo}`, filas: [[r.ventana === 'Análisis' ? C.pet : '#B7C3C8', 'Percentil 90', `${ADR.fmt(r.p90, 1)} min`], [C.nar, 'Cerca de Tukey', `${ADR.fmt(r.cerca, 1)} min`]], total: ['Estado', r.ventana === 'Análisis' ? (r.p90 > r.cerca ? 'Sobre la cerca' : 'Bajo la cerca') : 'Año de referencia'] }); })
       .on('pointerleave', () => { tip.hide(); guia.attr('visibility', 'hidden'); });
   });
 }</script>
@@ -723,18 +744,18 @@
 <script>{
   // ---------- inasistencia y carga ----------
   const C = ADR.C;
-  const columnas = (el, datos, et, val, aria, color, info) => {
+  const columnas = (el, datos, et, val, aria, color, info, ctx = true) => {
     const alto = 210, svg = ADR.svg(el, alto, aria); if (!datos.length) { svg.append('text').attr('y', 18).text('Sin datos para esta selección.'); return; }
     const W = +svg.attr('width'), x = d3.scaleBand().domain(datos.map(et)).range([0, W]).padding(0.28), y = d3.scaleLinear().domain([0, d3.max(datos, val) * 1.18]).range([alto - 26, 6]);
     const tip = ADR.tip(el);
-    svg.selectAll('rect').data(datos).join('rect').attr('x', (r) => x(et(r))).attr('width', x.bandwidth()).attr('y', (r) => y(val(r))).attr('height', (r) => y(0) - y(val(r))).attr('rx', 4).attr('fill', color).on('pointermove', (ev, r) => tip.show(ev, info(r))).on('pointerleave', tip.hide);
+    svg.selectAll('rect').data(datos).join('rect').attr('x', (r) => x(et(r))).attr('width', x.bandwidth()).attr('y', (r) => y(val(r))).attr('height', (r) => y(0) - y(val(r))).attr('rx', 4).attr('fill', color).on('pointermove', (ev, r) => tip.show(ev, info(r), color, ctx)).on('pointerleave', tip.hide);
     svg.selectAll('text.v').data(datos).join('text').attr('class', 'v et').attr('x', (r) => x(et(r)) + x.bandwidth() / 2).attr('y', (r) => y(val(r)) - 5).attr('text-anchor', 'middle').text((r) => ADR.fmt(val(r), 1) + ' %');
     svg.selectAll('text.x').data(datos).join('text').attr('class', 'x').attr('x', (r) => x(et(r)) + x.bandwidth() / 2).attr('y', alto - 8).attr('text-anchor', 'middle').text(et);
   };
   dash.draw('g-anticipacion', (el) => { const d = dash.data('sel_antic'); if (!ADR.estado(el, d.status)) return;
-    columnas(el, d.data, (r) => r.anticipacion, (r) => r.pct_inasistencia, 'Inasistencia según días de anticipación', C.roj, (r) => [`${r.anticipacion} días`, `Inasistencia: ${ADR.fmt(r.pct_inasistencia, 1)} %`, `${ADR.fmt(r.citas)} citas`]); });
+    columnas(el, d.data, (r) => r.anticipacion, (r) => r.pct_inasistencia, 'Inasistencia según días de anticipación', C.roj, (r) => [`${r.anticipacion} días`, `Inasistencia: ${ADR.fmt(r.pct_inasistencia, 1)} %`, `Citas: ${ADR.fmt(r.citas)}`]); });
   dash.draw('g-siguiente', (el) => { const d = dash.data('siguiente'); if (!ADR.estado(el, d.status)) return;
-    columnas(el, d.data, (r) => `${ADR.fmt(r.espera_min)}–${ADR.fmt(r.espera_max)}`, (r) => r.pct_inasistencia, 'Inasistencia a la siguiente cita por quintil de espera', C.nar, (r) => [r.quintil, `Espera de ${ADR.fmt(r.espera_min, 1)} a ${ADR.fmt(r.espera_max, 1)} min`, `Faltó a la siguiente: ${ADR.fmt(r.pct_inasistencia, 1)} %`, `${ADR.fmt(r.visitas)} pares de visitas`]); });
+    columnas(el, d.data, (r) => `${ADR.fmt(r.espera_min)}–${ADR.fmt(r.espera_max)}`, (r) => r.pct_inasistencia, 'Inasistencia a la siguiente cita por quintil de espera', C.nar, (r) => [r.quintil, `Espera de ${ADR.fmt(r.espera_min, 1)} a ${ADR.fmt(r.espera_max, 1)} min`, `Faltó a la siguiente: ${ADR.fmt(r.pct_inasistencia, 1)} %`, `Pares de visitas: ${ADR.fmt(r.visitas)}`], false); });
   dash.draw('g-spearman', (el) => {
     const d = dash.data('spearman'); if (!ADR.estado(el, d.status)) return;
     const datos = [...d.data].sort((a, b) => (a.nivel === b.nivel ? b.rho - a.rho : (a.nivel === 'Centro' ? -1 : 1))), nombre = (r) => r.nivel === 'Centro' ? `${r.unidad} (centro)` : r.unidad;
@@ -743,7 +764,7 @@
     svg.append('line').attr('x1', x(0)).attr('x2', x(0)).attr('y1', 4).attr('y2', alto - 18).attr('stroke', C.suave);
     const g = svg.selectAll('g.b').data(datos).join('g').attr('class', 'b').attr('transform', (r, i) => `translate(0,${8 + i * fila})`);
     g.append('text').attr('x', izq - 8).attr('y', 9).attr('dy', '0.35em').attr('text-anchor', 'end').attr('class', 'et').text(nombre);
-    g.append('rect').attr('x', (r) => Math.min(x(0), x(r.rho))).attr('width', (r) => Math.max(1, Math.abs(x(r.rho) - x(0)))).attr('height', 18).attr('rx', 4).attr('fill', (r) => r.nivel === 'Centro' ? C.nar : C.pet).on('pointermove', (ev, r) => tip.show(ev, [nombre(r), `rho = ${ADR.fmt(r.rho, 3)}`])).on('pointerleave', tip.hide);
+    g.append('rect').attr('x', (r) => Math.min(x(0), x(r.rho))).attr('width', (r) => Math.max(1, Math.abs(x(r.rho) - x(0)))).attr('height', 18).attr('rx', 4).attr('fill', (r) => r.nivel === 'Centro' ? C.nar : C.pet).on('pointermove', (ev, r) => tip.show(ev, { titulo: nombre(r), sub: 'Visitas del día frente a espera mediana', filas: [[r.nivel === 'Centro' ? C.nar : C.pet, 'Spearman (rho)', ADR.fmt(r.rho, 3)]] })).on('pointerleave', tip.hide);
     g.append('text').attr('x', (r) => Math.max(x(0), x(r.rho)) + 6).attr('y', 9).attr('dy', '0.35em').attr('class', 'et').text((r) => ADR.fmt(r.rho, 3));
   });
 }</script>
