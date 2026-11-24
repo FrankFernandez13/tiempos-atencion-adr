@@ -203,7 +203,7 @@
           <button type="button" id="e-pct" aria-pressed="false" data-escala="pct">100 %</button>
         </div>
         <div class="lienzo" data-draw="g-estado" data-source="sel_estado"></div>
-        <p class="nota">Las reprogramadas y canceladas no cuentan como atendidas ni como inasistencia.</p>
+        <p class="nota">No cuentan como atendidas ni como inasistencia: las reprogramadas, las canceladas y las citas reemplazadas el mismo día (el paciente no se presentó, pero ese día fue atendido en el mismo departamento).</p>
       </div>
       <div class="tarjeta graf" id="c-mensual">
         <h2>Visitas por mes</h2>
@@ -340,7 +340,7 @@
 
   <details id="definiciones">
     <summary>Definiciones y criterios</summary>
-    <p class="nota" style="margin-top:8px">Datos del sistema de gestión de citas de la ADR, seudonimizados y agregados por localidad y área: el tablero no contiene registros de pacientes. Tres centros: Santo Domingo (edificios 1-A, 1-B, 2-A y 4-A, SD Este y SD Oeste), Santiago y Azua. Los tiempos usan solo las visitas con secuencia completa, excluyen los departamentos con registro diferido (Estudios e Imágenes, Terapia del Lenguaje, Intervención Temprana, Odontología y Psicopedagogía) y descartan la primera y la última semana del período. La inasistencia se calcula sobre las citas atendidas, no presentadas o con llegada sin atención. Sin filtros, las cifras coinciden con el trabajo de grado del Grupo 1.</p>
+    <p class="nota" style="margin-top:8px">Datos del sistema de gestión de citas de la ADR, seudonimizados y agregados por localidad y área: el tablero no contiene registros de pacientes. Tres centros: Santo Domingo (edificios 1-A, 1-B, 2-A y 4-A, SD Este y SD Oeste), Santiago y Azua. Los tiempos usan solo las visitas con secuencia completa, excluyen los departamentos con registro diferido (Estudios e Imágenes, Terapia del Lenguaje, Intervención Temprana, Odontología y Psicopedagogía) y descartan la primera y la última semana del período. La inasistencia es: no se presentó ÷ (atendidas + no se presentó + llegó sin ser atendida); una cita no presentada no cuenta si ese mismo día el paciente fue atendido en el mismo departamento (cita reemplazada). Sin filtros, las cifras coinciden con el trabajo de grado del Grupo 1.</p>
   </details>
 </div>
 
@@ -415,7 +415,7 @@
       const ids = new Set(); pacientes.filter((p) => celdas.has(p.celda)).forEach((p) => { let acu = 0; p.delta.split(',').forEach((d) => { acu += +d; ids.add(acu); }); });
       const ll = ADR.cuantiles(filas.map((r) => r.h_llegada), [0.25, 0.5, 0.75, 0.9]);
       const med = (k) => ADR.cuantiles(filas.map((r) => r[k]), [0.5]).q[0];
-      return [{ visitas, pacientes: ids.size, atendidas: aten, no_se_presento: ns, reprogramadas: suma('reprogramadas'), canceladas: suma('canceladas'), sin_atencion: sin,
+      return [{ visitas, pacientes: ids.size, atendidas: aten, no_se_presento: ns, reprogramadas: suma('reprogramadas'), canceladas: suma('canceladas'), reemplazadas: suma('reemplazadas'), sin_atencion: sin,
         pct_atendidas: visitas ? aten / visitas * 100 : null, pct_inasistencia: aten + ns + sin ? ns / (aten + ns + sin) * 100 : null,
         medibles: ll.n, q1: ll.q[0], mediana: ll.q[1], q3: ll.q[2], p90: ll.q[3],
         tiempo_total: med('h_total'), espera_seguro: med('h_seguro'), espera_caja: med('h_caja'), espera_profesional: med('h_profesional') }];
@@ -433,11 +433,11 @@
   });
   dash.calc('sel_estado', {
     inputs: ['base'], title: 'Estado final por centro',
-    description: 'Citas atendidas, no presentadas y otras (reprogramadas, canceladas, sin atención) por centro, para la selección.',
+    description: 'Citas atendidas, no presentadas (inasistencia) y otras (reprogramadas, canceladas, reemplazadas el mismo día o sin atención) por centro, para la selección.',
     fn: (base) => {
       const s = ADR.sel(), g = d3.group(base.filter((r) => ADR.pasa(r, s)), (r) => r.centro);
       return [...g].map(([centro, rs]) => { const t = (k) => rs.reduce((a, r) => a + r[k], 0);
-        return { centro, atendidas: t('atendidas'), no_se_presento: t('no_se_presento'), otras: t('reprogramadas') + t('canceladas') + t('sin_atencion'), visitas: t('visitas') }; });
+        return { centro, atendidas: t('atendidas'), no_se_presento: t('no_se_presento'), otras: t('reprogramadas') + t('canceladas') + t('sin_atencion') + t('reemplazadas'), visitas: t('visitas') }; });
     }
   });
   dash.calc('sel_calor', {
@@ -639,7 +639,7 @@
     const filas = [...d.data].sort((a, b) => b.visitas - a.visitas), pct = ADR.vista.escala === 'pct';
     const alto = 230, svg = ADR.svg(el, alto, 'Visitas atendidas y no atendidas por centro');
     if (!filas.length) return;
-    const W = +svg.attr('width'), claves = [['atendidas', 'Atendidas', C.pet], ['no_se_presento', 'No se presentó', C.nar], ['otras', 'Reprogramadas, canceladas o sin atención', C.cel]];
+    const W = +svg.attr('width'), claves = [['atendidas', 'Atendidas', C.pet], ['no_se_presento', 'No se presentó', C.nar], ['otras', 'Otras: reprogramadas, canceladas, reemplazadas o sin atención', C.cel]];
     const val = (r, k) => pct ? r[k] / r.visitas * 100 : r[k];
     const x = d3.scaleBand().domain(filas.map((r) => r.centro)).range([0, W]).padding(0.35);
     const y = d3.scaleLinear().domain([0, pct ? 100 : d3.max(filas, (r) => r.visitas) * 1.12]).range([alto - 58, 8]);
@@ -647,7 +647,7 @@
     filas.forEach((r) => { let acu = 0;
       claves.forEach(([k, t, c]) => { const v = val(r, k); const y0 = y(acu), y1 = y(acu + v); acu += v;
         svg.append('rect').attr('x', x(r.centro)).attr('width', x.bandwidth()).attr('y', y1).attr('height', Math.max(0, y0 - y1 - 1)).attr('fill', c)
-          .on('pointermove', (ev) => tip.show(ev, { titulo: r.centro, filas: claves.map(([kk, tt, cc]) => [cc, tt === 'Reprogramadas, canceladas o sin atención' ? 'Otras (reprog., canc.)' : tt, `${ADR.fmt(r[kk])} (${ADR.fmt(r[kk] / r.visitas * 100, 0)}%)`]), total: ['Total visitas', ADR.fmt(r.visitas)] })).on('pointerleave', tip.hide);
+          .on('pointermove', (ev) => tip.show(ev, { titulo: r.centro, filas: claves.map(([kk, tt, cc]) => [cc, tt.startsWith('Otras') ? 'Otras' : tt, `${ADR.fmt(r[kk])} (${ADR.fmt(r[kk] / r.visitas * 100, 0)}%)`]), total: ['Total visitas', ADR.fmt(r.visitas)] })).on('pointerleave', tip.hide);
         if (y0 - y1 > 16) svg.append('text').attr('x', x(r.centro) + x.bandwidth() / 2).attr('y', (y0 + y1) / 2).attr('dy', '0.35em').attr('text-anchor', 'middle').attr('fill', k === 'otras' ? C.tinta : '#fff').style('fill', k === 'otras' ? C.tinta : '#fff').text(pct ? ADR.fmt(v, 1) + ' %' : ADR.corto(r[k])); });
       if (!pct) svg.append('text').attr('class', 'et').attr('x', x(r.centro) + x.bandwidth() / 2).attr('y', y(acu) - 5).attr('text-anchor', 'middle').text(ADR.fmt(r.visitas));
       svg.append('text').attr('class', 'et').attr('x', x(r.centro) + x.bandwidth() / 2).attr('y', alto - 42).attr('text-anchor', 'middle').text(r.centro); });
